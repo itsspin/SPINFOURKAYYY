@@ -516,10 +516,23 @@ public partial class MainWindow : Window, IDisposable
         _ = sender;
         _ = e;
 
-        if (IsLoaded && !_isBusy && !_isCloseCleanupRunning)
+        if (!IsLoaded || _isBusy || _isCloseCleanupRunning)
         {
-            RefreshDisplayAndPlan();
+            return;
         }
+
+        // The plan targets the monitor chosen in the combo box, not the one
+        // under this window. Only a DPI change (crossing monitors) affects the
+        // captured snapshot, so plain moves must not recompute plans or
+        // overwrite the current status message.
+        int dpiPercentage = (int)Math.Round(
+            VisualTreeHelper.GetDpi(this).DpiScaleX * 100);
+        if (_display is { } display && display.DpiPercentage == dpiPercentage)
+        {
+            return;
+        }
+
+        RefreshDisplayAndPlan();
     }
 
     private void Browse_Click(object sender, RoutedEventArgs e)
@@ -586,8 +599,12 @@ public partial class MainWindow : Window, IDisposable
                 }
             }
 
-            NormalizeFilterForPreset();
+            string? filterNotice = NormalizeFilterForPreset();
             RefreshDisplayAndPlan();
+            if (filterNotice is not null)
+            {
+                SetStatus(StatusTone.Info, "FILTER ADJUSTED", filterNotice);
+            }
         }
     }
 
@@ -613,8 +630,12 @@ public partial class MainWindow : Window, IDisposable
             _isUpdatingPresetCards = false;
         }
 
-        NormalizeFilterForPreset();
+        string? filterNotice = NormalizeFilterForPreset();
         RefreshDisplayAndPlan();
+        if (filterNotice is not null)
+        {
+            SetStatus(StatusTone.Info, "FILTER ADJUSTED", filterNotice);
+        }
     }
 
     private void FineScaleStep_Click(object sender, RoutedEventArgs e)
@@ -686,8 +707,12 @@ public partial class MainWindow : Window, IDisposable
 
         if (IsLoaded && !_isUpdatingPresetCards)
         {
-            NormalizeFilterForPreset();
+            string? filterNotice = NormalizeFilterForPreset();
             RefreshDisplayAndPlan();
+            if (filterNotice is not null)
+            {
+                SetStatus(StatusTone.Info, "FILTER ADJUSTED", filterNotice);
+            }
         }
     }
 
@@ -701,12 +726,18 @@ public partial class MainWindow : Window, IDisposable
         }
 
         SpinUiLayoutReadyCheckBox.IsChecked = false;
+        string? filterNotice = null;
         if (!UsesStrictSpinUiMode)
         {
-            NormalizeFilterForPreset();
+            filterNotice = NormalizeFilterForPreset();
         }
 
         RefreshDisplayAndPlan();
+        if (filterNotice is not null)
+        {
+            SetStatus(StatusTone.Info, "FILTER ADJUSTED", filterNotice);
+        }
+
         if (_activeState is not null)
         {
             SetRecoveryStatus();
@@ -884,7 +915,14 @@ public partial class MainWindow : Window, IDisposable
             ? PathLocator.BackupRoot
             : Path.GetDirectoryName(_activeState.BackupManifestPath)
                 ?? PathLocator.BackupRoot;
-        OpenFolder(path);
+        try
+        {
+            OpenFolder(path);
+        }
+        catch (Exception exception) when (IsExpectedUserFacingFailure(exception))
+        {
+            ShowError("Could not open the backup folder", exception.Message);
+        }
     }
 
     private void OpenEngine_Click(object sender, RoutedEventArgs e)
@@ -896,7 +934,7 @@ public partial class MainWindow : Window, IDisposable
         {
             OpenFolder(PathLocator.FindMagpieDirectory());
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (IsExpectedUserFacingFailure(exception))
         {
             ShowError("Scaling engine not found", exception.Message);
         }
@@ -2192,11 +2230,11 @@ public partial class MainWindow : Window, IDisposable
         };
     }
 
-    private void NormalizeFilterForPreset()
+    private string? NormalizeFilterForPreset()
     {
         if (!IsLoaded || UsesStrictSpinUiMode)
         {
-            return;
+            return null;
         }
 
         FineUiScale scale = FineUiScale.FromSlider(FineScaleSlider.Value);
@@ -2205,23 +2243,30 @@ public partial class MainWindow : Window, IDisposable
             GenericUiScalePolicy.NormalizeFilter(scale, requested);
         if (normalized == requested)
         {
-            return;
+            return null;
         }
 
-        QualityComboBox.SelectedIndex = normalized switch
+        bool previousUpdating = _isUpdatingPresetCards;
+        _isUpdatingPresetCards = true;
+        try
         {
-            ScalingFilter.Lanczos => 1,
-            ScalingFilter.NearestNeighbor => 2,
-            _ => 0,
-        };
-        SetStatus(
-            StatusTone.Info,
-            "FILTER ADJUSTED",
-            scale.Hundredths == FineUiScale.MinimumHundredths
-                ? "Native clarity uses the dedicated one-pass RCAS path. "
-                    + "Adaptive FSR was selected automatically."
-                : "Exact-pixel scaling is limited to the true 2× Comfort preset. "
-                    + "Adaptive FSR was selected for this fractional scale.");
+            QualityComboBox.SelectedIndex = normalized switch
+            {
+                ScalingFilter.Lanczos => 1,
+                ScalingFilter.NearestNeighbor => 2,
+                _ => 0,
+            };
+        }
+        finally
+        {
+            _isUpdatingPresetCards = previousUpdating;
+        }
+
+        return scale.Hundredths == FineUiScale.MinimumHundredths
+            ? "Native clarity uses the dedicated one-pass RCAS path. "
+                + "Adaptive FSR was selected automatically."
+            : "Exact-pixel scaling is limited to the true 2× Comfort preset. "
+                + "Adaptive FSR was selected for this fractional scale.";
     }
 
     private void RefreshActionAvailability()
@@ -3461,13 +3506,28 @@ public partial class MainWindow : Window, IDisposable
 
             if (preparedModeMatchesSelection)
             {
-                QualityComboBox.SelectedIndex = state.ResolutionPlan.Filter switch
+                ScalingFilter journalFilter = state.ResolutionPlan.Filter;
+                if (state.UiCompatibilityMode
+                    == FourKayUiCompatibilityMode.GenericOrCustom)
+                {
+                    // A journal edited outside this app could pair 100% with a
+                    // non-clarity filter or a fractional scale with exact pixels;
+                    // the same policy that governs the live controls applies here.
+                    journalFilter = GenericUiScalePolicy.NormalizeFilter(
+                        FineUiScale.FromSlider(FineScaleSlider.Value),
+                        journalFilter);
+                }
+
+                QualityComboBox.SelectedIndex = journalFilter switch
                 {
                     ScalingFilter.Lanczos => 1,
                     ScalingFilter.NearestNeighbor => 2,
                     _ => 0,
                 };
-                ChatTextComboBox.SelectedIndex = state.ChatFontSizeIncrease;
+                ChatTextComboBox.SelectedIndex = Math.Clamp(
+                    state.ChatFontSizeIncrease,
+                    0,
+                    ChatTextComboBox.Items.Count - 1);
             }
         }
         finally

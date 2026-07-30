@@ -146,6 +146,15 @@ Run:
 
 The first build downloads the official pinned Magpie v0.12.1 release, verifies its SHA-256 before use, and checks out its exact audited source commit. The build then restores dependencies, compiles with warnings treated as errors, runs the deterministic self-test suite, publishes a self-contained single-file executable, verifies licenses, stages corresponding source, and creates the release ZIP plus SHA-256 sidecar under `artifacts`.
 
+## Continuous integration and releases
+
+Two GitHub Actions workflows run the same `build.ps1` pipeline on `windows-latest`:
+
+- **CI** (`.github/workflows/ci.yml`) builds, runs the deterministic self-test suite, and packages the ZIP plus checksum sidecar on every push and pull request against `main`, uploading them as workflow artifacts.
+- **Release** (`.github/workflows/release.yml`) runs when a `v<major>.<minor>.<patch>` tag is pushed. It refuses to continue unless the tag matches the `<Version>` in `src/SpinFourKay.App/SpinFourKay.App.csproj`, rebuilds and re-verifies the packaged checksum, then publishes a GitHub Release containing the ZIP, its `.zip.sha256` sidecar, and verification instructions. Tags with a prerelease suffix (for example `v0.6.0-rc.1`) are published as prereleases.
+
+To cut a release: update the `<Version>`, `<FileVersion>`, and `<AssemblyVersion>` values in the app project, merge to `main`, then create and push the matching tag (for example `git tag v0.5.2 && git push origin v0.5.2`).
+
 ## Third-party and trademark notice
 
 The program source is MIT-licensed. The bundled Magpie engine is distributed under GPL-3.0 with its corresponding source and license. See `THIRD_PARTY_NOTICES.md` and `ThirdPartyLicenses` in the release.

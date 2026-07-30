@@ -100,8 +100,9 @@ public sealed class ResolutionPlanner
         // Nearest-neighbor is useful only when every source pixel maps to an exact block.
         if (filter == ScalingFilter.NearestNeighbor)
         {
+            bool exactIntegerSourceFound = false;
             int requestedIntegerScale = Math.Clamp((int)Math.Round(desiredUiScale), 1, 4);
-            for (int integerScale = requestedIntegerScale; integerScale >= 1; integerScale--)
+            for (int integerScale = requestedIntegerScale; integerScale >= 2; integerScale--)
             {
                 int exactWidth = target.Width / integerScale;
                 int exactHeight = target.Height / integerScale;
@@ -112,8 +113,16 @@ public sealed class ResolutionPlanner
                 {
                     width = exactWidth;
                     height = exactHeight;
+                    exactIntegerSourceFound = true;
                     break;
                 }
+            }
+
+            // Without an enlarging integer divisor, nearest-neighbor would
+            // silently collapse to a 1:1 pass instead of the requested scale.
+            if (!exactIntegerSourceFound)
+            {
+                filter = ScalingFilter.Fsr;
             }
         }
 

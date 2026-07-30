@@ -416,6 +416,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
             request.LauncherPath,
             cancellationToken)
             .ConfigureAwait(false);
+        EnsureTargetMonitorMatchesPlan(state);
 
         IReadOnlyList<ProcessDescriptor> existing =
             _processDiscovery.FindByExecutablePath(state.EqGamePath);
@@ -446,6 +447,9 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                     requiredStablePolls: 3,
                     cancellationToken).ConfigureAwait(false);
 
+            // Sign-in can take minutes; re-verify the display topology before
+            // the prepared window is moved onto the target monitor.
+            EnsureTargetMonitorMatchesPlan(state);
             nint targetMonitor = new(state.TargetMonitorHandle);
             WindowPlacementResult placement = _windowPlacement.CenterFixedClientArea(
                 sourceWindow.Handle,
@@ -976,14 +980,17 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
             if (!exactExitConfirmed)
             {
                 TimeSpan remaining = deadline - DateTimeOffset.UtcNow;
-                TimeSpan shutdownBudget = remaining < TimeSpan.FromSeconds(4)
-                    ? remaining
-                    : TimeSpan.FromSeconds(4);
-                exactExitConfirmed = await _magpieProcess.ShutdownExactAsync(
-                    lease.MagpieDirectory,
-                    exactProcess,
-                    shutdownBudget,
-                    cancellationToken).ConfigureAwait(false);
+                if (remaining > TimeSpan.Zero)
+                {
+                    TimeSpan shutdownBudget = remaining < TimeSpan.FromSeconds(4)
+                        ? remaining
+                        : TimeSpan.FromSeconds(4);
+                    exactExitConfirmed = await _magpieProcess.ShutdownExactAsync(
+                        lease.MagpieDirectory,
+                        exactProcess,
+                        shutdownBudget,
+                        cancellationToken).ConfigureAwait(false);
+                }
             }
 
             IReadOnlyList<MagpieRunningInstance> remainingInstances =
@@ -1113,13 +1120,14 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
 
             MagpieScalingWindowInspection inspection =
                 _scalingInspector.Inspect(expectedSourceWindow);
-            if (!HasProcessExited(exactProcessToken)
+            TimeSpan stopRemaining = deadline - DateTimeOffset.UtcNow;
+            if (stopRemaining > TimeSpan.Zero
+                && !HasProcessExited(exactProcessToken)
                 && inspection.IsActive
                 && inspection.ScalingProcessId == exactProcessToken.Id
                 && (inspection.SourceWindowHandle == nint.Zero
                     || inspection.SourceWindowHandle == expectedSourceWindow))
             {
-                TimeSpan stopRemaining = deadline - DateTimeOffset.UtcNow;
                 TimeSpan stopBudget = stopRemaining < TimeSpan.FromSeconds(4)
                     ? stopRemaining
                     : TimeSpan.FromSeconds(4);
@@ -2115,14 +2123,17 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                     + $"{source.ClientBounds.Height}, not the expected {size}.");
         }
 
+        // The placement planner intentionally lets the window frame extend past
+        // the work area (and, at native size, the monitor); only the client
+        // area's containment is part of the session contract.
         if (monitor.Handle != launch.Placement.Monitor.Handle
             || monitor.Bounds != launch.Placement.Monitor.Bounds
-            || !Contains(monitor.WorkArea, source.WindowBounds))
+            || !Contains(monitor.Bounds, source.ClientBounds))
         {
             throw new InvalidOperationException(
-                "The exact game window is no longer fully contained on the session's "
-                    + "original target monitor, or that monitor's physical bounds "
-                    + "changed.");
+                "The exact game client area is no longer fully contained on the "
+                    + "session's original target monitor, or that monitor's "
+                    + "physical bounds changed.");
         }
     }
 
@@ -2502,6 +2513,23 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         }
 
         return afterHash;
+    }
+
+    private void EnsureTargetMonitorMatchesPlan(FourKayPreparedState state)
+    {
+        nint expectedHandle = new(state.TargetMonitorHandle);
+        MonitorDescriptor? monitor = _windowPlacement.GetMonitors()
+            .FirstOrDefault(candidate => candidate.Handle == expectedHandle);
+        if (monitor is null
+            || monitor.Bounds != state.TargetMonitorBounds
+            || monitor.Bounds.Size != state.ResolutionPlan.TargetResolution)
+        {
+            throw new InvalidOperationException(
+                "The prepared target monitor is no longer available with its "
+                    + "original physical bounds, so the borderless output could "
+                    + "appear on the wrong display or at the wrong size. Restore "
+                    + "the profile, reselect the display, and prepare again.");
+        }
     }
 
     private static void ValidateLaunchRequest(FourKayLaunchRequest request)
