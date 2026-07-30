@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and release (for example v0.5.1)'
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, verify, and publish release
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Resolve release tag
+        id: tag
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $tag = if ($env:EVENT_NAME -eq 'workflow_dispatch') {
+            $env:INPUT_TAG
+          } else {
+            $env:REF_NAME
+          }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            throw "Release tag '$tag' must look like v<major>.<minor>.<patch>[-prerelease]."
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$($tag.Substring(1))" >> $env:GITHUB_OUTPUT
+          Write-Host "Release tag: $tag"
+
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Verify tag matches the app project version
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content -LiteralPath 'src/SpinFourKay.App/SpinFourKay.App.csproj'
+          $projectVersion = [string]($project.Project.PropertyGroup.Version |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+            Select-Object -First 1)
+          $tagVersion = '${{ steps.tag.outputs.version }}'
+          if ($projectVersion -cne $tagVersion) {
+            throw "Tag version '$tagVersion' does not match the app project <Version> '$projectVersion'. Update the project version and re-tag."
+          }
+          Write-Host "Tag and project agree on version $projectVersion."
+
+      - name: Set up .NET SDK 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Cache pinned Magpie inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/Magpie-v0.12.1-x64.zip
+            vendor/Magpie-source-v0.12.1
+          key: magpie-v0.12.1
+
+      - name: Build, run self-tests, and package
+        shell: pwsh
+        run: ./build.ps1 -Configuration Release -Version '${{ steps.tag.outputs.version }}'
+
+      - name: Verify packaged checksum sidecar
+        id: package
+        shell: pwsh
+        run: |
+          $version = '${{ steps.tag.outputs.version }}'
+          $zipPath = "artifacts/SpinFOURKAYYY-$version-win-x64.zip"
+          $sidecarPath = "$zipPath.sha256"
+          foreach ($required in @($zipPath, $sidecarPath)) {
+            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+              throw "Expected release output is missing: $required"
+            }
+          }
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
+          $sidecarLine = (Get-Content -LiteralPath $sidecarPath -TotalCount 1).Trim()
+          $sidecarHash = ($sidecarLine -split '\s+')[0].ToLowerInvariant()
+          if ($actualHash -cne $sidecarHash) {
+            throw "The checksum sidecar does not match the packaged ZIP. Sidecar: $sidecarHash; actual: $actualHash."
+          }
+          "zip=$zipPath" >> $env:GITHUB_OUTPUT
+          "sidecar=$sidecarPath" >> $env:GITHUB_OUTPUT
+          "sha256=$actualHash" >> $env:GITHUB_OUTPUT
+          Write-Host "Verified $zipPath ($actualHash)."
+
+      - name: Compose release notes
+        shell: pwsh
+        run: |
+          $version = '${{ steps.tag.outputs.version }}'
+          $sha256 = '${{ steps.package.outputs.sha256 }}'
+          $notes = @"
+          ## SpinFOURKAYYY $version
+
+          Self-contained Windows x64 release. Users do not need to install .NET or Magpie separately.
+
+          ### Verify the download
+
+          ``````powershell
+          (Get-FileHash -Algorithm SHA256 .\SpinFOURKAYYY-$version-win-x64.zip).Hash
+          Get-Content .\SpinFOURKAYYY-$version-win-x64.zip.sha256
+          ``````
+
+          Expected SHA-256: ``$sha256``
+
+          ### Install
+
+          1. Extract the complete ZIP into a normal user-writable folder (not ``Program Files`` or the EverQuest directory).
+          2. Keep ``SpinFOURKAYYY.exe``, ``Engine``, and the notice/license files together.
+          3. Run ``SpinFOURKAYYY.exe``. See the README for the Native clarity (100%) and 101–200% scaling workflow.
+
+          This build was produced by the tagged Release workflow run, including the deterministic self-test suite, pinned Magpie v0.12.1 verification, and license checks.
+          "@
+          Set-Content -LiteralPath 'release-notes.md' -Value $notes -Encoding utf8NoBOM
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.tag.outputs.tag }}'
+          $version = '${{ steps.tag.outputs.version }}'
+          $prereleaseFlag = @()
+          if ($version.Contains('-')) {
+            $prereleaseFlag = @('--prerelease')
+          }
+          gh release create $tag `
+            '${{ steps.package.outputs.zip }}' `
+            '${{ steps.package.outputs.sidecar }}' `
+            --title "SpinFOURKAYYY $version" `
+            --notes-file release-notes.md `
+            --verify-tag `
+            @prereleaseFlag
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release create failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpinFOURKAYYY-${{ steps.tag.outputs.version }}-win-x64-release
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.sidecar }}
+            release-notes.md
+          if-no-files-found: error

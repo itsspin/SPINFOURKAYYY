@@ -38,6 +38,9 @@ internal static class Program
             AutomaticAttachScaleAndMonitorPolicy);
         runner.Add("Resolution / fine 1-percent scale matrix", ResolutionFineScaleMatrix);
         runner.Add("Resolution / non-4K safety floor", ResolutionNon4KSafetyFloor);
+        runner.Add(
+            "Resolution / nearest-neighbor integer fallback",
+            ResolutionNearestNeighborIntegerFallback);
         runner.Add("Resolution / invalid input errors", ResolutionInvalidInputErrors);
         runner.Add(
             "SpinUI resolution / validated source catalog",
@@ -135,6 +138,9 @@ internal static class Program
         runner.Add(
             "Launch / prepared checksum and native scale guards",
             LaunchConfigurationIntegrityGuardsAsync);
+        runner.Add(
+            "Launch / prepared target monitor must match the plan",
+            LaunchTargetMonitorMismatchRejectsBeforeEffectsAsync);
         runner.Add("Launch / external Magpie conflict prevents process launch", LaunchExternalMagpieConflictAsync);
         runner.Add(
             "Launch / Attach enforces confirmed client resolution",
@@ -526,6 +532,44 @@ internal static class Program
             ScalingFilter.Lanczos);
         Assert.Equal(new PixelSize(1600, 900), native.SourceResolution);
         Assert.NearlyEqual(1.0, native.ActualUiScale);
+    }
+
+    private static void ResolutionNearestNeighborIntegerFallback()
+    {
+        ResolutionPlanner planner = new();
+
+        // A display that divides exactly by two keeps true exact pixels.
+        ResolutionPlan exact = planner.CreateCustomPlan(
+            new PixelSize(3840, 2160),
+            2.0,
+            ScalingFilter.NearestNeighbor);
+        Assert.Equal(ScalingFilter.NearestNeighbor, exact.Filter);
+        Assert.Equal(new PixelSize(1920, 1080), exact.SourceResolution);
+        Assert.True(exact.UsesIntegerScale);
+
+        // A display with no enlarging integer divisor must not silently
+        // collapse to a 1:1 nearest pass at an advertised 200%.
+        ResolutionPlan oddWidth = planner.CreateCustomPlan(
+            new PixelSize(3441, 1440),
+            2.0,
+            ScalingFilter.NearestNeighbor);
+        Assert.Equal(ScalingFilter.Fsr, oddWidth.Filter);
+        Assert.True(
+            oddWidth.SourceResolution.Width < 3441,
+            "The fallback must still render at a reduced source size.");
+        Assert.True(
+            oddWidth.ActualUiScale > 1.5,
+            "The fallback must keep most of the requested enlargement.");
+
+        // A small display whose exact half falls below the safety floor also
+        // falls back instead of returning an unscaled nearest pass.
+        ResolutionPlan floor = planner.CreatePlan(
+            new PixelSize(1280, 720),
+            ResolutionPresetKind.PixelCrisp);
+        Assert.Equal(ScalingFilter.Fsr, floor.Filter);
+        Assert.True(
+            floor.ActualUiScale > 1.0,
+            "The fallback plan must remain an enlargement.");
     }
 
     private static void ResolutionInvalidInputErrors()
@@ -3565,6 +3609,91 @@ internal static class Program
         Assert.Equal(0, attachProcesses.FindCalls);
         Assert.Equal(0, attachConfig.WriteCalls);
         Assert.Equal(0, attachMagpie.StartCalls);
+    }
+
+    private static async Task LaunchTargetMonitorMismatchRejectsBeforeEffectsAsync()
+    {
+        await using TempDirectory temp = new();
+        FakeClientFixture client = await FakeClientFixture.CreateAsync(temp.Path)
+            .ConfigureAwait(false);
+        FourKayPreparedState prepared = CreateJournalState(
+            temp.Path,
+            FourKayJournalStatus.Prepared,
+            DateTimeOffset.UnixEpoch) with
+        {
+            EqDirectory = client.EqDirectory,
+            EqGamePath = client.EqGamePath,
+            EqClientIniPath = client.EqClientIniPath,
+            DpiCompatibility =
+                CreateJournalState(
+                    temp.Path,
+                    FourKayJournalStatus.Prepared,
+                    DateTimeOffset.UnixEpoch).DpiCompatibility with
+                {
+                    ExecutablePath = client.EqGamePath,
+                },
+            AppliedIniSha256 = Convert.ToHexString(
+                SHA256.HashData(client.OriginalIniBytes)),
+            UiCompatibilityMode = FourKayUiCompatibilityMode.GenericOrCustom,
+        };
+        FakeProcessDiscoveryService processes = new();
+        FakeMagpiePortableConfigService config = new();
+        FakeMagpieProcessService magpie = new();
+        FourKayLaunchService service = new(
+            processes,
+            new FakeWindowDiscoveryService(),
+            FakeWindowPlacementService.Create4K(),
+            config,
+            magpie,
+            new FakeScalingWindowInspector());
+        string launcherPath = Path.Combine(client.EqDirectory, "LaunchPad.exe");
+
+        InvalidOperationException movedBounds =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.LaunchAndScaleAsync(
+                    CreateLaunchRequest(prepared with
+                    {
+                        TargetMonitorBounds = new PixelRect(0, 0, 2560, 1440),
+                    }) with
+                    {
+                        LauncherPath = launcherPath,
+                    })).ConfigureAwait(false);
+        Assert.Contains(
+            "wrong display or at the wrong size",
+            movedBounds.Message);
+
+        InvalidOperationException missingMonitor =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.LaunchAndScaleAsync(
+                    CreateLaunchRequest(prepared with
+                    {
+                        TargetMonitorHandle = 43,
+                    }) with
+                    {
+                        LauncherPath = launcherPath,
+                    })).ConfigureAwait(false);
+        Assert.Contains("no longer available", missingMonitor.Message);
+
+        InvalidOperationException planMismatch =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.LaunchAndScaleAsync(
+                    CreateLaunchRequest(prepared with
+                    {
+                        ResolutionPlan = new ResolutionPlanner().CreatePlan(
+                            new PixelSize(2560, 1440),
+                            ResolutionPresetKind.Comfort),
+                    }) with
+                    {
+                        LauncherPath = launcherPath,
+                    })).ConfigureAwait(false);
+        Assert.Contains(
+            "wrong display or at the wrong size",
+            planMismatch.Message);
+
+        Assert.Equal(0, processes.FindCalls);
+        Assert.Equal(0, config.PrepareCalls);
+        Assert.Equal(0, config.WriteCalls);
+        Assert.Equal(0, magpie.StartCalls);
     }
 
     private static async Task LaunchExternalMagpieConflictAsync()
