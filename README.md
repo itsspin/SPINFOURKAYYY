@@ -151,9 +151,12 @@ The first build downloads the official pinned Magpie v0.12.1 release, verifies i
 Two GitHub Actions workflows run the same `build.ps1` pipeline on `windows-latest`:
 
 - **CI** (`.github/workflows/ci.yml`) builds, runs the deterministic self-test suite, and packages the ZIP plus checksum sidecar on every push and pull request against `main`, uploading them as workflow artifacts.
-- **Release** (`.github/workflows/release.yml`) runs when a `v<major>.<minor>.<patch>` tag is pushed. It refuses to continue unless the tag matches the `<Version>` in `src/SpinFourKay.App/SpinFourKay.App.csproj`, rebuilds and re-verifies the packaged checksum, then publishes a GitHub Release containing the ZIP, its `.zip.sha256` sidecar, and verification instructions. Tags with a prerelease suffix (for example `v0.6.0-rc.1`) are published as prereleases.
+- **Release** (`.github/workflows/release.yml`) runs when a `v<major>.<minor>.<patch>` tag is pushed, or on demand from the Actions tab. It refuses to continue unless the tag matches the `<Version>` in `src/SpinFourKay.App/SpinFourKay.App.csproj`, rebuilds and re-verifies the packaged checksum, then publishes a GitHub Release containing the ZIP, its `.zip.sha256` sidecar, and verification instructions. Tags with a prerelease suffix (for example `v0.6.0-rc.1`) are published as prereleases.
 
-To cut a release: update the `<Version>`, `<FileVersion>`, and `<AssemblyVersion>` values in the app project, merge to `main`, then create and push the matching tag (for example `git tag v0.5.2 && git push origin v0.5.2`).
+To cut a release:
+
+1. Update the `<Version>`, `<FileVersion>`, and `<AssemblyVersion>` values in the app project and merge to `main`.
+2. Either push the matching tag (`git tag v1.0.2 && git push origin v1.0.2`), or open **Actions → Release → Run workflow** on `main` and enter the tag name. If the tag does not exist yet, the workflow verifies the project version first and then creates the tag itself; if it does exist, that exact tag is rebuilt and the release's assets and notes are refreshed in place.
 
 ## Third-party and trademark notice
 

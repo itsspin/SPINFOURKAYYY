@@ -7,7 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to build and release (for example v1.0.1)'
+        description: >-
+          Release tag (for example v1.0.1). Must match the app project
+          <Version>. If the tag does not exist yet it is created from the
+          branch this workflow runs on; if it exists, that tag is rebuilt
+          and the release assets are refreshed.
         required: true
         type: string
 
@@ -44,26 +48,38 @@ jobs:
           "version=$($tag.Substring(1))" >> $env:GITHUB_OUTPUT
           Write-Host "Release tag: $tag"
 
-      - name: Verify the tag exists
-        if: github.event_name == 'workflow_dispatch'
+      - name: Resolve build ref
+        id: buildref
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_SHA: ${{ github.sha }}
         run: |
-          gh api "repos/${{ github.repository }}/git/ref/tags/$env:TAG" --silent
-          if ($LASTEXITCODE -ne 0) {
-            throw ("Tag '$env:TAG' does not exist in this repository. This workflow " +
-              "builds an existing tag; it does not create one. First make sure the " +
-              "app project <Version> matches, then run: " +
-              "git tag $env:TAG && git push origin $env:TAG " +
-              "(pushing the tag also triggers this workflow automatically).")
+          if ($env:EVENT_NAME -ne 'workflow_dispatch') {
+            "ref=$env:TAG" >> $env:GITHUB_OUTPUT
+            "create_tag=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Building pushed tag $env:TAG."
+            exit 0
+          }
+          gh api "repos/${{ github.repository }}/git/ref/tags/$env:TAG" --silent 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            "ref=$env:TAG" >> $env:GITHUB_OUTPUT
+            "create_tag=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Tag $env:TAG already exists; rebuilding that exact tag."
+          }
+          else {
+            "ref=$env:DISPATCH_SHA" >> $env:GITHUB_OUTPUT
+            "create_tag=true" >> $env:GITHUB_OUTPUT
+            Write-Host ("Tag $env:TAG does not exist yet; it will be created from " +
+              "$env:DISPATCH_SHA after the project version is verified.")
           }
 
-      - name: Check out tagged source
+      - name: Check out release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.tag.outputs.tag }}
+          ref: ${{ steps.buildref.outputs.ref }}
 
       - name: Verify tag matches the app project version
         shell: pwsh
@@ -77,6 +93,22 @@ jobs:
             throw "Tag version '$tagVersion' does not match the app project <Version> '$projectVersion'. Update the project version and re-tag."
           }
           Write-Host "Tag and project agree on version $projectVersion."
+
+      - name: Create the release tag
+        if: steps.buildref.outputs.create_tag == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh api "repos/${{ github.repository }}/git/refs" `
+            -f "ref=refs/tags/$env:TAG" `
+            -f "sha=$env:SHA"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not create tag '$env:TAG' at $env:SHA."
+          }
+          Write-Host "Created tag $env:TAG at $env:SHA."
 
       - name: Set up .NET SDK 9
         uses: actions/setup-dotnet@v4
@@ -166,15 +198,35 @@ jobs:
           if ($version.Contains('-')) {
             $prereleaseFlag = @('--prerelease')
           }
-          gh release create $tag `
-            '${{ steps.package.outputs.zip }}' `
-            '${{ steps.package.outputs.sidecar }}' `
-            --title "SpinFOURKAYYY $version" `
-            --notes-file release-notes.md `
-            --verify-tag `
-            @prereleaseFlag
-          if ($LASTEXITCODE -ne 0) {
-            throw "gh release create failed with exit code $LASTEXITCODE"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; refreshing its assets and notes."
+            gh release upload $tag `
+              '${{ steps.package.outputs.zip }}' `
+              '${{ steps.package.outputs.sidecar }}' `
+              --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh release upload failed with exit code $LASTEXITCODE"
+            }
+            gh release edit $tag `
+              --title "SpinFOURKAYYY $version" `
+              --notes-file release-notes.md `
+              @prereleaseFlag
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh release edit failed with exit code $LASTEXITCODE"
+            }
+          }
+          else {
+            gh release create $tag `
+              '${{ steps.package.outputs.zip }}' `
+              '${{ steps.package.outputs.sidecar }}' `
+              --title "SpinFOURKAYYY $version" `
+              --notes-file release-notes.md `
+              --verify-tag `
+              @prereleaseFlag
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh release create failed with exit code $LASTEXITCODE"
+            }
           }
 
       - name: Upload workflow artifacts
