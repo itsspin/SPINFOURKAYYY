@@ -1,0 +1,859 @@
+<Window x:Class="SpinFourKay.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="SpinFOURKAYYY — Readable EverQuest at any resolution"
+        Width="940"
+        Height="720"
+        MinWidth="820"
+        MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource CanvasBrush}"
+        Foreground="{StaticResource TextBrush}"
+        Closing="Window_Closing">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Padding="18,10"
+                Background="#0E1117"
+                BorderBrush="#30251F"
+                BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border Width="42"
+                        Height="42"
+                        Margin="0,0,12,0"
+                        Background="{StaticResource AccentSoftBrush}"
+                        BorderBrush="{StaticResource AccentBrush}"
+                        BorderThickness="1"
+                        CornerRadius="11">
+                    <TextBlock HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               FontFamily="Segoe UI Variable Display, Segoe UI"
+                               FontSize="17"
+                               FontWeight="Black"
+                               Text="4K" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock FontFamily="Segoe UI Variable Display, Segoe UI"
+                               FontSize="22"
+                               FontWeight="Black"
+                               Text="SpinFOURKAYYY" />
+                    <TextBlock Margin="0,1,0,0"
+                               FontSize="12"
+                               Foreground="{StaticResource MutedTextBrush}"
+                               Text="Readable EverQuest - simple 1% sizing for any UI" />
+                </StackPanel>
+                <Button Grid.Column="2"
+                        MinHeight="40"
+                        Padding="13,7"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Open SpinUI GitHub repository"
+                        AutomationProperties.HelpText="Opens the optional SpinUI repository in your default browser."
+                        ToolTip="Open the optional SpinUI project"
+                        Style="{StaticResource QuietButton}"
+                        Click="OpenSpinUi_Click"
+                        Content="SpinUI GitHub" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel MaxWidth="860"
+                            Margin="20,12,20,16"
+                            HorizontalAlignment="Center">
+                    <Border x:Name="RecoveryGateBorder"
+                            Margin="0,0,0,9"
+                            Padding="12,10"
+                            Visibility="Collapsed"
+                            Background="#211B10"
+                            BorderBrush="#725A23"
+                            BorderThickness="1"
+                            CornerRadius="10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Width="34"
+                                    Height="34"
+                                    Margin="0,0,10,0"
+                                    VerticalAlignment="Center"
+                                    Background="#3B2E14"
+                                    CornerRadius="17">
+                                <TextBlock HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           FontSize="17"
+                                           FontWeight="Black"
+                                           Foreground="{StaticResource WarningBrush}"
+                                           Text="!" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock x:Name="RecoveryCountText"
+                                           FontSize="13"
+                                           FontWeight="Bold"
+                                           Foreground="{StaticResource WarningBrush}"
+                                           Text="An older setup was found" />
+                                <TextBlock x:Name="RecoveryDetailText"
+                                           Margin="0,1,12,0"
+                                           FontSize="11"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           TextWrapping="Wrap"
+                                           Text="Its verified player-profile snapshot will restore automatically after Legends closes. Any newer session copy is preserved first." />
+                            </StackPanel>
+                            <Button x:Name="RestoreButton"
+                                    Grid.Column="2"
+                                    MinWidth="108"
+                                    MinHeight="44"
+                                    Padding="13,7"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Restore saved player profile now"
+                                    AutomationProperties.HelpText="Restores the verified pre-session layout, hotbars, macros, keybinds, userdata, and client settings after Legends is closed."
+                                    Style="{StaticResource SecondaryButton}"
+                                    Click="Restore_Click"
+                                    Content="Restore now" />
+                        </Grid>
+                    </Border>
+
+                    <StackPanel x:Name="LauncherPanel">
+                    <StackPanel Margin="2,0,2,10">
+                        <TextBlock x:Name="ReadabilityEyebrowText"
+                                   Style="{StaticResource EyebrowText}"
+                                   Text="READY WHEN YOU ARE" />
+                        <TextBlock x:Name="ReadabilityHeadingText"
+                                   Margin="0,2,0,1"
+                                   FontFamily="Segoe UI Variable Display, Segoe UI"
+                                   FontSize="27"
+                                   FontWeight="Bold"
+                                   Text="Open it. Let the game get comfortable." />
+                        <TextBlock x:Name="ReadabilityDescriptionText"
+                                   FontSize="13"
+                                   Foreground="{StaticResource MutedTextBrush}"
+                                   TextWrapping="Wrap"
+                                   Text="Choose Native clarity to keep the UI at 100%, or choose a larger size for easier UI and overhead-name reading." />
+                        <TextBlock Margin="0,3,0,0"
+                                   FontSize="11"
+                                   Foreground="{StaticResource MutedTextBrush}"
+                                   TextWrapping="Wrap"
+                                   Text="A real size change is applied at the next safe launch so Legends rebuilds its render surface correctly. Your current UI profile stays selected and is protected." />
+                    </StackPanel>
+
+                    <Border x:Name="FineScaleBorder"
+                            Padding="16,12"
+                            Background="#111B20"
+                            BorderBrush="#38677B"
+                            BorderThickness="1"
+                            CornerRadius="13">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Margin="2,0,2,7">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock x:Name="FineScaleTitleText"
+                                               FontSize="16"
+                                               FontWeight="Bold"
+                                               Text="Fine UI sizing" />
+                                    <TextBlock x:Name="FineScaleHintText"
+                                               Margin="0,1,0,0"
+                                               FontSize="12"
+                                               Foreground="{StaticResource MutedTextBrush}"
+                                               Text="Move slowly until text and windows feel comfortable." />
+                                </StackPanel>
+                                <TextBlock x:Name="FineScaleUsageText"
+                                           Grid.Column="1"
+                                           Margin="14,0,0,0"
+                                           VerticalAlignment="Center"
+                                           FontSize="11"
+                                           Foreground="{StaticResource SuccessBrush}"
+                                           Text="1% precision" />
+                            </Grid>
+
+                            <Grid Grid.Row="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="64" />
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="64" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="FineScaleMinusButton"
+                                        Grid.Column="0"
+                                        Width="64"
+                                        Height="64"
+                                        MinWidth="64"
+                                        MinHeight="64"
+                                        Padding="0"
+                                        Tag="-0.01"
+                                        FontSize="30"
+                                        FontWeight="Bold"
+                                        AutomationProperties.Name="Decrease UI size by one percent"
+                                        AutomationProperties.HelpText="Makes the EverQuest interface one percent smaller."
+                                        ToolTip="Smaller by 1%"
+                                        Style="{StaticResource ScaleStepButton}"
+                                        Click="FineScaleStep_Click"
+                                        Content="−" />
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                    <TextBlock x:Name="FineScaleValueText"
+                                               HorizontalAlignment="Center"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="30"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource CyanBrush}"
+                                               Text="125%" />
+                                    <Slider x:Name="FineScaleSlider"
+                                            Margin="4,0"
+                                            Minimum="1.00"
+                                            Maximum="2.00"
+                                            Value="1.25"
+                                            SmallChange="0.01"
+                                            LargeChange="0.05"
+                                            TickFrequency="0.01"
+                                            IsSnapToTickEnabled="True"
+                                            AutoToolTipPlacement="TopLeft"
+                                            AutoToolTipPrecision="2"
+                                            AutomationProperties.Name="Fine readability scale"
+                                            AutomationProperties.HelpText="Use arrow keys for exact one-percent changes."
+                                            Style="{StaticResource FineScaleSliderStyle}"
+                                            ValueChanged="FineScaleSlider_ValueChanged" />
+                                    <Grid Margin="5,-1,5,0">
+                                        <TextBlock HorizontalAlignment="Left"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Text="smaller" />
+                                        <TextBlock HorizontalAlignment="Right"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Text="larger" />
+                                    </Grid>
+                                </StackPanel>
+                                <Button x:Name="FineScalePlusButton"
+                                        Grid.Column="4"
+                                        Width="64"
+                                        Height="64"
+                                        MinWidth="64"
+                                        MinHeight="64"
+                                        Padding="0"
+                                        Tag="+0.01"
+                                        FontSize="30"
+                                        FontWeight="Bold"
+                                        AutomationProperties.Name="Increase UI size by one percent"
+                                        AutomationProperties.HelpText="Makes the EverQuest interface one percent larger."
+                                        ToolTip="Larger by 1%"
+                                        Style="{StaticResource ScaleStepButton}"
+                                        Click="FineScaleStep_Click"
+                                        Content="+" />
+                            </Grid>
+                            <TextBlock x:Name="FineScaleSourceText"
+                                       Grid.Row="2"
+                                       Margin="0,5,0,0"
+                                       HorizontalAlignment="Center"
+                                       FontSize="11"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       Text="Exact game resolution will appear here" />
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Margin="2,8,0,5"
+                               FontSize="11"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource MutedTextBrush}"
+                               Text="QUICK SIZES" />
+                    <UniformGrid x:Name="PresetCardsGrid" Columns="2">
+                        <RadioButton x:Name="ComfortPresetRadio"
+                                     Margin="0,0,5,3"
+                                     GroupName="ResolutionPreset"
+                                     Style="{StaticResource PresetRadio}"
+                                     Checked="Preset_Checked">
+                            <StackPanel Margin="0,0,24,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock x:Name="ComfortTitleText"
+                                               FontSize="15"
+                                               FontWeight="Bold"
+                                               Text="Comfort" />
+                                    <TextBlock x:Name="ComfortBadgeText"
+                                               Margin="7,2,0,0"
+                                               FontSize="9"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource AccentBrush}"
+                                               Text="LARGEST" />
+                                </StackPanel>
+                                <TextBlock x:Name="ComfortDescriptionText"
+                                           Margin="0,1,0,0"
+                                           FontSize="11"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Text="2x · easiest to read" />
+                                <TextBlock x:Name="ComfortResolutionText"
+                                           Margin="0,1,0,0"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="10"
+                                           Foreground="{StaticResource CyanBrush}"
+                                           Text="1920×1080 → 3840×2160" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="BalancedPresetRadio"
+                                     Margin="5,0,0,3"
+                                     GroupName="ResolutionPreset"
+                                     Style="{StaticResource PresetRadio}"
+                                     Checked="Preset_Checked">
+                            <StackPanel Margin="0,0,24,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock x:Name="BalancedTitleText"
+                                               FontSize="15"
+                                               FontWeight="Bold"
+                                               Text="Balanced" />
+                                    <TextBlock x:Name="BalancedBadgeText"
+                                               Margin="7,2,0,0"
+                                               FontSize="9"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource CyanBrush}"
+                                               Text="POPULAR" />
+                                </StackPanel>
+                                <TextBlock x:Name="BalancedDescriptionText"
+                                           Margin="0,1,0,0"
+                                           FontSize="11"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Text="1.5x · larger and sharp" />
+                                <TextBlock x:Name="BalancedResolutionText"
+                                           Margin="0,1,0,0"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="10"
+                                           Foreground="{StaticResource CyanBrush}"
+                                           Text="2560×1440 → 3840×2160" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="GentlePresetRadio"
+                                     Margin="0,3,5,0"
+                                     GroupName="ResolutionPreset"
+                                     IsChecked="True"
+                                     Style="{StaticResource PresetRadio}"
+                                     Checked="Preset_Checked">
+                            <StackPanel Margin="0,0,24,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock x:Name="GentleTitleText"
+                                               FontSize="15"
+                                               FontWeight="Bold"
+                                               Text="Gentle" />
+                                    <TextBlock x:Name="GentleBadgeText"
+                                               Margin="7,2,0,0"
+                                               FontSize="9"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource SuccessBrush}"
+                                               Text="RECOMMENDED" />
+                                </StackPanel>
+                                <TextBlock x:Name="GentleDescriptionText"
+                                           Margin="0,1,0,0"
+                                           FontSize="11"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Text="1.25x · more world detail" />
+                                <TextBlock x:Name="GentleResolutionText"
+                                           Margin="0,1,0,0"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="10"
+                                           Foreground="{StaticResource CyanBrush}"
+                                           Text="3072×1728 → 3840×2160" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NativeClarityPresetRadio"
+                                     Margin="5,3,0,0"
+                                     GroupName="ResolutionPreset"
+                                     Style="{StaticResource PresetRadio}"
+                                     Checked="Preset_Checked">
+                            <StackPanel Margin="0,0,24,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock x:Name="NativeClarityTitleText"
+                                               FontSize="15"
+                                               FontWeight="Bold"
+                                               Text="Native clarity" />
+                                    <TextBlock x:Name="NativeClarityBadgeText"
+                                               Margin="7,2,0,0"
+                                               FontSize="9"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource SuccessBrush}"
+                                               Text="NO UI RESIZE" />
+                                </StackPanel>
+                                <TextBlock x:Name="NativeClarityDescriptionText"
+                                           Margin="0,1,0,0"
+                                           FontSize="11"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Text="100% UI · crisper visible names" />
+                                <TextBlock x:Name="NativeClarityResolutionText"
+                                           Margin="0,1,0,0"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="10"
+                                           Foreground="{StaticResource CyanBrush}"
+                                           Text="3840×2160 · native RCAS clarity" />
+                            </StackPanel>
+                        </RadioButton>
+                    </UniformGrid>
+
+                    <TextBlock x:Name="NoCompatiblePresetText"
+                               Margin="0,7,0,0"
+                               Padding="10,7"
+                               Visibility="Collapsed"
+                               Background="#241214"
+                               Foreground="{StaticResource DangerBrush}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap"
+                               Text="No compatible preset is available for this display." />
+
+                    <Border x:Name="NoticeBorder"
+                            Margin="0,8,0,0"
+                            Padding="9,7"
+                            Background="#17191F"
+                            BorderBrush="#343B47"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                        <TextBlock HorizontalAlignment="Center"
+                                   FontSize="11"
+                                   Foreground="{StaticResource MutedTextBrush}"
+                                   Text="Visible overhead names can be sharpened or enlarged with the whole frame; missing or distance-culled names cannot be recreated. Game assets and UI skin files are not replaced." />
+                    </Border>
+
+                    <Grid Margin="0,9,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="PrepareLaunchButton"
+                                Grid.Column="0"
+                                MinHeight="52"
+                                AutomationProperties.HelpText="Backs up relevant settings, launches EverQuest Legends, and starts external readable scaling."
+                                IsEnabled="False"
+                                Style="{StaticResource PrimaryButton}"
+                                Click="PrepareAndLaunch_Click"
+                                Content="Launch EverQuest with 125% UI" />
+                        <Button x:Name="AttachButton"
+                                Grid.Column="2"
+                                MinWidth="190"
+                                MinHeight="48"
+                                Style="{StaticResource SecondaryButton}"
+                                Click="Attach_Click"
+                                Content="Restart required for real scaling" />
+                    </Grid>
+
+                    <Expander x:Name="AdvancedExpander"
+                              Margin="0,9,0,0"
+                              IsExpanded="False"
+                              AutomationProperties.Name="Advanced setup"
+                              AutomationProperties.HelpText="Shows game folder, display, optional SpinUI, quality, chat, and technical details."
+                              Style="{StaticResource AdvancedExpanderStyle}">
+                        <Expander.Header>
+                            <StackPanel>
+                                <TextBlock FontSize="14"
+                                           FontWeight="Bold"
+                                           Text="Advanced setup" />
+                                <TextBlock Margin="0,1,0,0"
+                                           FontSize="11"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Text="Game folder, display, optional SpinUI, quality, and technical details" />
+                            </StackPanel>
+                        </Expander.Header>
+                        <StackPanel Margin="0,9,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="3*" />
+                                    <ColumnDefinition Width="10" />
+                                    <ColumnDefinition Width="2*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0"
+                                        Padding="12"
+                                        Background="{StaticResource PanelBrush}"
+                                        BorderBrush="{StaticResource BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="9">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource EyebrowText}"
+                                                   Text="GAME FOLDER" />
+                                        <Grid Margin="0,5,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="7" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="LegendsPathTextBox"
+                                                     AutomationProperties.Name="EverQuest Legends folder"
+                                                     TextChanged="LegendsPathTextBox_TextChanged"
+                                                     ToolTip="The folder containing eqgame.exe and LaunchPad.exe" />
+                                            <Button x:Name="BrowseButton"
+                                                    Grid.Column="2"
+                                                    MinWidth="92"
+                                                    Style="{StaticResource SecondaryButton}"
+                                                    Click="Browse_Click"
+                                                    Content="Browse…" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="2"
+                                        Padding="12"
+                                        Background="{StaticResource PanelBrush}"
+                                        BorderBrush="{StaticResource BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="9">
+                                    <StackPanel>
+                                        <Grid>
+                                            <TextBlock Style="{StaticResource EyebrowText}"
+                                                       Text="FULLSCREEN DISPLAY" />
+                                            <TextBlock x:Name="DesktopScaleText"
+                                                       HorizontalAlignment="Right"
+                                                       FontFamily="Cascadia Mono, Consolas"
+                                                       FontSize="11"
+                                                       FontWeight="Bold"
+                                                       Foreground="{StaticResource SuccessBrush}"
+                                                       Text="UNCHANGED" />
+                                        </Grid>
+                                        <ComboBox x:Name="TargetDisplayComboBox"
+                                                  Margin="0,5,0,0"
+                                                  AutomationProperties.Name="Target fullscreen display"
+                                                  SelectionChanged="TargetDisplayComboBox_SelectionChanged" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Border Margin="0,9,0,0"
+                                    Padding="12"
+                                    Background="{StaticResource PanelBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="9">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Style="{StaticResource EyebrowText}"
+                                                       Text="UI TYPE" />
+                                            <TextBlock Margin="9,0,0,0"
+                                                       FontSize="12"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Text="Optional — current/default/custom is the normal choice" />
+                                        </StackPanel>
+                                        <Border Grid.Column="1"
+                                                Padding="8,3"
+                                                Background="#17232D"
+                                                BorderBrush="#38546A"
+                                                BorderThickness="1"
+                                                CornerRadius="9">
+                                            <TextBlock x:Name="SpinUiDetectionBadgeText"
+                                                       FontSize="10"
+                                                       FontWeight="Bold"
+                                                       Foreground="{StaticResource CyanBrush}"
+                                                       Text="CHECKING UI FILES" />
+                                        </Border>
+                                    </Grid>
+                                    <Grid Margin="0,7,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="8" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <RadioButton x:Name="CurrentUiModeRadioButton"
+                                                     Grid.Column="0"
+                                                     GroupName="UiSessionMode"
+                                                     IsChecked="True"
+                                                     AutomationProperties.Name="Keep current default or custom UI"
+                                                     AutomationProperties.HelpText="Uses whichever default or custom UI profile EverQuest already loads."
+                                                     Style="{StaticResource UiModeRadio}"
+                                                     Checked="UiSessionMode_Checked">
+                                            <StackPanel Margin="0,0,26,0">
+                                                <TextBlock FontSize="14"
+                                                           FontWeight="Bold"
+                                                           Text="Keep my current UI" />
+                                                <TextBlock Margin="0,1,0,0"
+                                                           FontSize="11"
+                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                           Text="Default or custom - no profile swap" />
+                                            </StackPanel>
+                                        </RadioButton>
+                                        <RadioButton x:Name="SpinUiModeRadioButton"
+                                                     Grid.Column="2"
+                                                     GroupName="UiSessionMode"
+                                                     AutomationProperties.Name="Use optional validated SpinUI profiles"
+                                                     AutomationProperties.HelpText="Only for users who intentionally apply matching SpinUI layout profiles."
+                                                     Style="{StaticResource UiModeRadio}"
+                                                     Checked="UiSessionMode_Checked">
+                                            <StackPanel Margin="0,0,26,0">
+                                                <TextBlock FontSize="14"
+                                                           FontWeight="Bold"
+                                                           Text="Validated SpinUI profiles" />
+                                                <TextBlock Margin="0,1,0,0"
+                                                           FontSize="11"
+                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                           Text="Optional strict profile workflow" />
+                                            </StackPanel>
+                                        </RadioButton>
+                                    </Grid>
+                                    <TextBlock x:Name="UiModeHelpText"
+                                               Margin="1,5,0,0"
+                                               FontSize="11"
+                                               Foreground="{StaticResource SuccessBrush}"
+                                               Text="Uses the UI profile EverQuest already loads; SpinFOURKAYYY does not select another character profile." />
+                                    <Border x:Name="UiModeConflictBorder"
+                                            Margin="0,6,0,0"
+                                            Padding="9,6"
+                                            Visibility="Collapsed"
+                                            Background="#2A2112"
+                                            BorderBrush="#715A25"
+                                            BorderThickness="1"
+                                            CornerRadius="6">
+                                        <TextBlock x:Name="UiModeConflictText"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{StaticResource WarningBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <Grid Margin="0,9,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="8" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Margin="0,0,0,4"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Text="Frame quality" />
+                                    <ComboBox x:Name="QualityComboBox"
+                                              AutomationProperties.Name="Frame scaling filter"
+                                              SelectionChanged="QualityComboBox_SelectionChanged">
+                                        <ComboBoxItem IsSelected="True"
+                                                      Tag="Fsr"
+                                                      Content="Adaptive FSR · recommended" />
+                                        <ComboBoxItem Tag="Lanczos"
+                                                      Content="Lanczos · lighter GPU use" />
+                                        <ComboBoxItem Tag="Integer"
+                                                      Content="Exact pixels · Comfort only" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock x:Name="ChatTextLabel"
+                                               Margin="0,0,0,4"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Text="Chat text" />
+                                    <ComboBox x:Name="ChatTextComboBox"
+                                              AutomationProperties.Name="Chat text adjustment"
+                                              SelectedIndex="0">
+                                        <ComboBoxItem Tag="Keep"
+                                                      IsSelected="True"
+                                                      Content="Keep current size" />
+                                        <ComboBoxItem Tag="OneStep"
+                                                      Content="Increase one step" />
+                                        <ComboBoxItem Tag="TwoSteps"
+                                                      Content="Increase two steps" />
+                                    </ComboBox>
+                                    <TextBlock x:Name="SpinUiChatHintText"
+                                               Margin="0,4,0,0"
+                                               Visibility="Collapsed"
+                                               FontSize="11"
+                                               Foreground="{StaticResource MutedTextBrush}"
+                                               TextWrapping="Wrap"
+                                               Text="SpinUI stores chat fonts per window. Right-click each chat window in game and choose Font." />
+                                </StackPanel>
+                            </Grid>
+
+                            <Border x:Name="SpinUiNoticeBorder"
+                                    Margin="0,9,0,0"
+                                    Padding="12"
+                                    Visibility="Collapsed"
+                                    Background="#102028"
+                                    BorderBrush="{StaticResource CyanBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="9">
+                                <StackPanel>
+                                    <TextBlock x:Name="SpinUiNoticeTitleText"
+                                               FontSize="14"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource CyanBrush}"
+                                               Text="Optional SpinUI profile setup" />
+                                    <TextBlock x:Name="SpinUiDetectionDetailText"
+                                               Margin="0,2,0,0"
+                                               FontSize="11"
+                                               Foreground="{StaticResource MutedTextBrush}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock x:Name="SpinUiLayoutInstructionText"
+                                               Margin="0,3,0,5"
+                                               FontSize="11"
+                                               TextWrapping="Wrap" />
+                                    <CheckBox x:Name="SpinUiLayoutReadyCheckBox"
+                                              FontWeight="SemiBold"
+                                              Checked="SpinUiLayoutReady_Checked"
+                                              Unchecked="SpinUiLayoutReady_Checked">
+                                        <TextBlock FontSize="12"
+                                                   TextWrapping="Wrap"
+                                                   Text="I intentionally applied the matching SpinUI layout profile for this character." />
+                                    </CheckBox>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Margin="0,9,0,0"
+                                    Padding="10"
+                                    Background="#11141B"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="9">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock x:Name="PipelineSourceLabel"
+                                                       FontSize="10"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Text="Legends renders" />
+                                            <TextBlock x:Name="PipelineSourceText"
+                                                       FontFamily="Cascadia Mono, Consolas"
+                                                       FontSize="14"
+                                                       FontWeight="Bold"
+                                                       Text="1920 × 1080" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1"
+                                                   Margin="9,0"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Text="→" />
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock FontSize="10"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Text="External scale" />
+                                            <TextBlock x:Name="PipelineScaleText"
+                                                       FontFamily="Cascadia Mono, Consolas"
+                                                       FontSize="14"
+                                                       FontWeight="Bold"
+                                                       Foreground="{StaticResource AccentBrush}"
+                                                       Text="2.00× FSR" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="3"
+                                                   Margin="9,0"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Text="→" />
+                                        <StackPanel Grid.Column="4">
+                                            <TextBlock FontSize="10"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Text="Your display" />
+                                            <TextBlock x:Name="PipelineTargetText"
+                                                       FontFamily="Cascadia Mono, Consolas"
+                                                       FontSize="14"
+                                                       FontWeight="Bold"
+                                                       Foreground="{StaticResource SuccessBrush}"
+                                                       Text="3840 × 2160" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock x:Name="InputSafetyText"
+                                               Grid.Row="1"
+                                               Margin="0,6,0,0"
+                                               FontSize="11"
+                                               Foreground="{StaticResource WarningBrush}"
+                                               Text="Mouse alignment is verified when fullscreen starts." />
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </Expander>
+                </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <Border Grid.Row="2"
+                Padding="16,8"
+                Background="#090B0F"
+                BorderBrush="#242A34"
+                BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0"
+                            Margin="0,0,12,0"
+                            VerticalAlignment="Center"
+                            Orientation="Horizontal">
+                    <Ellipse x:Name="StatusDot"
+                             Width="9"
+                             Height="9"
+                             Margin="0,0,8,0"
+                             Fill="{StaticResource SuccessBrush}" />
+                    <TextBlock x:Name="StatusHeadingText"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource SuccessBrush}"
+                               Text="READY" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusMessageText"
+                               FontSize="12"
+                               TextTrimming="CharacterEllipsis"
+                               TextWrapping="NoWrap"
+                               AutomationProperties.Name="SpinFOURKAYYY status"
+                               AutomationProperties.LiveSetting="Polite"
+                               Text="Choose a comfortable size, then play." />
+                    <ProgressBar x:Name="OperationProgressBar"
+                                 Height="3"
+                                 Margin="0,4,0,0"
+                                 Background="#202630"
+                                 Foreground="{StaticResource AccentBrush}"
+                                 IsIndeterminate="False"
+                                 Maximum="100"
+                                 Value="0" />
+                </StackPanel>
+                <StackPanel Grid.Column="2"
+                            Margin="14,0,0,0"
+                            VerticalAlignment="Center"
+                            Orientation="Horizontal">
+                    <Button x:Name="OpenBackupButton"
+                            Margin="0,0,6,0"
+                            Padding="10,5"
+                            MinHeight="36"
+                            FontSize="11"
+                            Style="{StaticResource QuietButton}"
+                            Click="OpenBackup_Click"
+                            Content="Backups" />
+                    <Button x:Name="OpenEngineButton"
+                            Padding="10,5"
+                            MinHeight="36"
+                            FontSize="11"
+                            Style="{StaticResource QuietButton}"
+                            Click="OpenEngine_Click"
+                            Content="Scaling engine" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

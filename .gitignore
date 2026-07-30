@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+artifacts/
+.artifacts-root-preflight/
+release/
+*.user
+*.suo
+vendor/*.zip
+vendor/*.download
+vendor/Magpie-v0.12.1-x64/
+vendor/Magpie-source-v0.12.1/
