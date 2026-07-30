@@ -108,11 +108,11 @@ The shaders run on the GPU and work with AMD, NVIDIA, and compatible Intel adapt
 
 ## Download and verify
 
-SpinFOURKAYYY 0.5.1 is an unsigned prototype distributed as a ZIP plus a neighboring `.zip.sha256` file.
+SpinFOURKAYYY 1.0.1 is an unsigned prototype distributed as a ZIP plus a neighboring `.zip.sha256` file.
 
 ```powershell
-(Get-FileHash -Algorithm SHA256 .\SpinFOURKAYYY-0.5.1-win-x64.zip).Hash
-Get-Content .\SpinFOURKAYYY-0.5.1-win-x64.zip.sha256
+(Get-FileHash -Algorithm SHA256 .\SpinFOURKAYYY-1.0.1-win-x64.zip).Hash
+Get-Content .\SpinFOURKAYYY-1.0.1-win-x64.zip.sha256
 ```
 
 The hexadecimal values must match. Extract the ZIP completely and run the executable from the extracted folder, not from inside the archive, `Program Files`, the EverQuest directory, or an elevated administrator session.
@@ -141,7 +141,7 @@ Requirements:
 Run:
 
 ```powershell
-.\build.ps1 -Version 0.5.1
+.\build.ps1 -Version 1.0.1
 ```
 
 The first build downloads the official pinned Magpie v0.12.1 release, verifies its SHA-256 before use, and checks out its exact audited source commit. The build then restores dependencies, compiles with warnings treated as errors, runs the deterministic self-test suite, publishes a self-contained single-file executable, verifies licenses, stages corresponding source, and creates the release ZIP plus SHA-256 sidecar under `artifacts`.
