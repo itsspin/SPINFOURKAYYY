@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, self-test, and package
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Read app version from project
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content -LiteralPath 'src/SpinFourKay.App/SpinFourKay.App.csproj'
+          $version = [string]($project.Project.PropertyGroup.Version |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+            Select-Object -First 1)
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw 'The app project does not declare a <Version> property.'
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "App project version: $version"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Cache pinned Magpie inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/Magpie-v0.12.1-x64.zip
+            vendor/Magpie-source-v0.12.1
+          key: magpie-v0.12.1
+
+      - name: Build, run self-tests, and package
+        shell: pwsh
+        run: ./build.ps1 -Configuration Release -Version '${{ steps.version.outputs.version }}'
+
+      - name: Upload release candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpinFOURKAYYY-${{ steps.version.outputs.version }}-win-x64
+          path: |
+            artifacts/SpinFOURKAYYY-${{ steps.version.outputs.version }}-win-x64.zip
+            artifacts/SpinFOURKAYYY-${{ steps.version.outputs.version }}-win-x64.zip.sha256
+          if-no-files-found: error
