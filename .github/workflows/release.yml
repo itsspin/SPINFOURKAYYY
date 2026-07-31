@@ -75,6 +75,10 @@ jobs:
             Write-Host ("Tag $env:TAG does not exist yet; it will be created from " +
               "$env:DISPATCH_SHA after the project version is verified.")
           }
+          # The runner appends "exit $LASTEXITCODE" to pwsh steps, and the gh
+          # probe above intentionally exits 1 when the tag is missing. Clear it
+          # so the missing-tag path does not fail the step.
+          exit 0
 
       - name: Check out release source
         uses: actions/checkout@v4
