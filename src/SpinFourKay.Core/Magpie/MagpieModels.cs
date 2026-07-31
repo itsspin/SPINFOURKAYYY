@@ -21,12 +21,16 @@ public sealed record MagpieProfileRequest
 
     public ScalingFilter Filter { get; init; } = ScalingFilter.Fsr;
 
-    public double RcasSharpness { get; init; } = 0.75;
+    /// <summary>
+    /// Clarity strength from 0 to 2. Values up to 1 map to one RCAS pass;
+    /// values above 1 add a second RCAS pass with the remainder.
+    /// </summary>
+    public double RcasSharpness { get; init; } = 1.0;
 
     /// <summary>
-    /// Uses a one-pass RCAS clarity treatment without resizing the captured
-    /// frame. This is reserved for a source whose client area exactly matches
-    /// the physical target display.
+    /// Uses the RCAS clarity treatment without resizing the captured frame.
+    /// This is reserved for a source whose client area exactly matches the
+    /// physical target display.
     /// </summary>
     public bool NativeClarityOnly { get; init; }
 

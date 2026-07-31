@@ -1479,6 +1479,48 @@ internal static class Program
                 {
                     NativeClarityOnly = true,
                 })).ConfigureAwait(false);
+
+        // Clarity strength above 1.0 adds a second RCAS pass carrying the
+        // remainder, for both the smooth FSR and native-clarity modes.
+        MagpiePortableConfigResult boosted = await service.WriteAsync(
+            fixture.CreateRequest(ScalingFilter.Fsr) with
+            {
+                RcasSharpness = 1.5,
+            }).ConfigureAwait(false);
+        using JsonDocument boostedJson = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(boosted.ConfigPath)
+                .ConfigureAwait(false));
+        JsonElement boostedModes =
+            boostedJson.RootElement.GetProperty("scalingModes");
+        JsonElement boostedFsr = FindNamed(
+            boostedModes,
+            MagpiePortableConfigService.SmoothModeName);
+        JsonElement boostedFsrEffects = boostedFsr.GetProperty("effects");
+        Assert.Equal(3, boostedFsrEffects.GetArrayLength());
+        Assert.Equal(
+            @"FSR\FSR_RCAS",
+            boostedFsrEffects[1].GetProperty("name").GetString());
+        Assert.NearlyEqual(
+            1.0,
+            boostedFsrEffects[1]
+                .GetProperty("parameters")
+                .GetProperty("sharpness")
+                .GetDouble());
+        Assert.Equal(
+            @"FSR\FSR_RCAS",
+            boostedFsrEffects[2].GetProperty("name").GetString());
+        Assert.NearlyEqual(
+            0.5,
+            boostedFsrEffects[2]
+                .GetProperty("parameters")
+                .GetProperty("sharpness")
+                .GetDouble());
+        JsonElement boostedClarity = FindNamed(
+            boostedModes,
+            MagpiePortableConfigService.NativeClarityModeName);
+        Assert.Equal(
+            2,
+            boostedClarity.GetProperty("effects").GetArrayLength());
     }
 
     private static async Task MagpieConfigTransactionRollbackAsync()
@@ -1576,7 +1618,12 @@ internal static class Program
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => service.WriteAsync(fixture.CreateRequest(ScalingFilter.Fsr) with
             {
-                RcasSharpness = 1.01,
+                RcasSharpness = 2.01,
+            })).ConfigureAwait(false);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => service.WriteAsync(fixture.CreateRequest(ScalingFilter.Fsr) with
+            {
+                RcasSharpness = -0.01,
             })).ConfigureAwait(false);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => service.WriteAsync(fixture.CreateRequest(ScalingFilter.Fsr) with
@@ -3564,6 +3611,10 @@ internal static class Program
         Assert.Equal(0, launchConfig.WriteCalls);
         Assert.Equal(0, launchMagpie.StartCalls);
 
+        // A non-native, missing, or absent UIScale is advisory-only for Attach:
+        // the read-only check never blocks scaling and never edits the file.
+        // With no running game process, Attach proceeds past the advisory and
+        // stops at process discovery without touching any file.
         string nonNativeText = Encoding.UTF8.GetString(client.OriginalIniBytes)
             .Replace("UIScale=0", "UIScale=2", StringComparison.Ordinal);
         await File.WriteAllTextAsync(client.EqClientIniPath, nonNativeText)
@@ -3578,8 +3629,8 @@ internal static class Program
             attachConfig,
             attachMagpie,
             new FakeScalingWindowInspector());
-        InvalidDataException stacked =
-            await Assert.ThrowsAsync<InvalidDataException>(
+        InvalidOperationException stacked =
+            await Assert.ThrowsAsync<InvalidOperationException>(
                 () => attachService.AttachExistingAsync(new FourKayAttachRequest
                 {
                     EqDirectory = client.EqDirectory,
@@ -3587,17 +3638,21 @@ internal static class Program
                     Filter = ScalingFilter.Fsr,
                     TargetMonitor = new nint(42),
                 })).ConfigureAwait(false);
-        Assert.Contains("UIScale=0", stacked.Message);
-        Assert.Equal(0, attachProcesses.FindCalls);
+        Assert.Contains("not running", stacked.Message);
+        Assert.Equal(1, attachProcesses.FindCalls);
         Assert.Equal(0, attachConfig.WriteCalls);
         Assert.Equal(0, attachMagpie.StartCalls);
+        Assert.Equal(
+            nonNativeText,
+            await File.ReadAllTextAsync(client.EqClientIniPath)
+                .ConfigureAwait(false));
 
         string missingText = Encoding.UTF8.GetString(client.OriginalIniBytes)
             .Replace("UIScale=0\r\n", string.Empty, StringComparison.Ordinal);
         await File.WriteAllTextAsync(client.EqClientIniPath, missingText)
             .ConfigureAwait(false);
-        InvalidDataException missing =
-            await Assert.ThrowsAsync<InvalidDataException>(
+        InvalidOperationException missing =
+            await Assert.ThrowsAsync<InvalidOperationException>(
                 () => attachService.AttachExistingAsync(new FourKayAttachRequest
                 {
                     EqDirectory = client.EqDirectory,
@@ -3605,10 +3660,30 @@ internal static class Program
                     Filter = ScalingFilter.Fsr,
                     TargetMonitor = new nint(42),
                 })).ConfigureAwait(false);
-        Assert.Contains("saved value is missing", missing.Message);
-        Assert.Equal(0, attachProcesses.FindCalls);
+        Assert.Contains("not running", missing.Message);
+        Assert.Equal(2, attachProcesses.FindCalls);
         Assert.Equal(0, attachConfig.WriteCalls);
         Assert.Equal(0, attachMagpie.StartCalls);
+        Assert.Equal(
+            missingText,
+            await File.ReadAllTextAsync(client.EqClientIniPath)
+                .ConfigureAwait(false));
+
+        File.Delete(client.EqClientIniPath);
+        InvalidOperationException absentIni =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => attachService.AttachExistingAsync(new FourKayAttachRequest
+                {
+                    EqDirectory = client.EqDirectory,
+                    MagpieDirectory = @"C:\BundledMagpie",
+                    Filter = ScalingFilter.Fsr,
+                    TargetMonitor = new nint(42),
+                })).ConfigureAwait(false);
+        Assert.Contains("not running", absentIni.Message);
+        Assert.Equal(3, attachProcesses.FindCalls);
+        Assert.Equal(0, attachConfig.WriteCalls);
+        Assert.Equal(0, attachMagpie.StartCalls);
+        Assert.False(File.Exists(client.EqClientIniPath));
     }
 
     private static async Task LaunchTargetMonitorMismatchRejectsBeforeEffectsAsync()
@@ -6515,7 +6590,6 @@ internal static class Program
             new()
             {
                 ActiveLaunch = ActiveLaunch,
-                EqClientIniPath = Client.EqClientIniPath,
                 RequestedPlan = plan,
                 WindowTimeout = TimeSpan.FromSeconds(1),
             };
