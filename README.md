@@ -1,22 +1,32 @@
 # SpinFOURKAYYY
 
-SpinFOURKAYYY is a reversible 4K-readability companion for EverQuest Legends on Windows. It can keep the UI at native 100% while applying a restrained clarity pass, or start the old client at a lower real render size and scale the complete frame for larger UI and overhead names.
+SpinFOURKAYYY is a live 4K-readability companion for EverQuest Legends on Windows. It scales the running game instantly — no relaunch and no configuration edits. It can keep the UI at native 100% while applying an adjustable clarity pass, or resize the running client window to a lower real render size and scale the complete frame for larger UI and overhead names.
 
-It does not replace EverQuest assets, inject code, alter network traffic, install a display driver, or force Windows desktop scaling to 100%.
+It never writes to `eqclient.ini` or any other saved player file. It also does not replace EverQuest assets, inject code, alter network traffic, install a display driver, or force Windows desktop scaling to 100%.
 
 ## Quick start
 
-1. Exit EverQuest Legends normally. LaunchPad and Options Editor must also be closed during preparation.
-2. Extract the complete SpinFOURKAYYY release into a normal user-writable folder.
-3. Run `SpinFOURKAYYY.exe`.
-4. Confirm the Legends directory and choose:
-   - **Native clarity (100%)** for the same UI size with crisper visible world and overhead-name text; or
+1. Extract the complete SpinFOURKAYYY release into a normal user-writable folder.
+2. Start EverQuest Legends normally (any launcher, any saved settings) and leave it in windowed mode.
+3. Run `SpinFOURKAYYY.exe`. If exactly one Legends client is running, live scaling attaches automatically.
+4. Choose:
+   - **Native clarity (100%)** for the same UI size with a crisper visible world and overhead-name text; or
    - any value from **101% to 200%** for larger UI and larger visible overhead names.
-5. Click **Launch** and finish sign-in through the normal Legends launcher.
+5. Move the slider at any time — the running game follows within a moment. **Clarity strength** adjusts live the same way.
+
+Order does not matter: you can also open SpinFOURKAYYY first and click **Start EverQuest for me**, which opens the normal launcher and attaches live scaling automatically when the game window appears. Nothing is prepared, backed up, or rewritten either way.
 
 No character-profile selection is required. **Current/default/custom UI** remains selected unless the user explicitly chooses the optional strict SpinUI workflow.
 
-If the app detects a running generic/custom-UI client, it will not resize it. EverQuest keeps a fixed renderer/backbuffer for that launch, so external live resizing only stretches and blurs the existing frame; it does not produce real UI reflow. Exit Legends normally and use the restart-backed Launch path.
+## Your saved settings always persist
+
+SpinFOURKAYYY treats the entire EverQuest directory as read-only:
+
+- `eqclient.ini` is never written, prepared, locked, or restored. At most it is read once, to warn when in-game native UI scaling is stacked on top of fullscreen scaling — and even then scaling proceeds.
+- UI layouts, hotbars, socials, spell sets, keybinds, and userdata are never backed up, swapped, or rolled back by the scaling flow. Whatever you change and save in game is exactly what the game loads next time.
+- The only thing SpinFOURKAYYY changes is the size and position of the running game **window**, and it restores the exact previous window geometry when scaling stops.
+
+If an older SpinFOURKAYYY version left a pre-session profile backup on this machine, the app shows a notice and leaves your current files untouched. **Restore profile** is strictly manual, requires the game to be closed, and preserves your current files in a recovery copy before rolling anything back.
 
 ## Native clarity versus larger UI
 
@@ -24,7 +34,7 @@ EverQuest composites the 3D world, UI, UI text, and overhead names into one fram
 
 | Mode | 4K source | UI size | Intended result |
 | --- | ---: | ---: | --- |
-| Native clarity | 3840×2160 | 100% | Native world/UI resolution plus a bounded one-pass RCAS clarity treatment |
+| Native clarity | 3840×2160 | 100% | Native world/UI resolution plus an adjustable RCAS clarity treatment |
 | Gentle | 3072×1728 | 125% | Larger UI and names while retaining the most world detail |
 | Balanced | 2560×1440 | 150% | Strong readability with a lower 3D source resolution |
 | Comfort | 1920×1080 | 200% | Maximum UI/name size; world starts from 1080p |
@@ -35,49 +45,21 @@ The slider covers every exact 1% step from 100% through 200%. Values above 100% 
 
 A true native-resolution 3D world with independently larger UI/nameplates would require client-native fractional scaling or a separately maintained UI/XML/font implementation. An external whole-frame scaler cannot honestly provide that split.
 
-## Why restart-backed scaling is required
+## How live scaling works
 
-SpinFOURKAYYY temporarily writes the selected source dimensions before EverQuest starts. That makes the client create its renderer, viewport, UI coordinate system, and input surface at the correct dimensions from the beginning.
+SpinFOURKAYYY resizes the running client **window** to the selected real source size, then scales that window to borderless fullscreen with the bundled Magpie engine. In windowed mode the client adapts its render surface to the window, so the resize takes effect immediately — the game does not need to be started from this app or restarted for a new size.
 
-Changing only the outer window while the game is already running does not rebuild those systems. It produces the exact failure mode this release avoids: unchanged relative UI size, increasing blur, window/fullscreen transitions, and unreliable expectations about what the slider changed.
+Moving the size slider during an active session pauses the fullscreen output, resizes the exact same game window, and re-verifies the borderless output and mouse map — typically within a second or two. When scaling stops (or the app closes), the game window is returned to its exact previous size and position and the game keeps running normally.
 
-The active session is therefore locked. To choose another size:
+## Adjustable clarity
 
-1. Stop scaling.
-2. Exit Legends and LaunchPad normally.
-3. Select the next size.
-4. Launch again.
+The **Clarity strength** slider (0–200%, default 110%) controls the RCAS sharpening applied to the visible frame in every mode:
 
-## Player-profile protection
+- **0%** disables sharpening entirely.
+- **1–100%** maps to one RCAS pass of increasing strength.
+- **101–200%** adds a second RCAS pass carrying the remainder, for a visibly stronger clarity treatment than any single pass can produce.
 
-Before any prepared launch, SpinFOURKAYYY creates a byte-exact, checksum-verified snapshot of the mutable files that can hold player configuration:
-
-- `eqclient.ini`;
-- root `UI_*.ini` character layouts;
-- root character/server/account INIs, including hotbuttons, socials, spell loadouts, friends, combat settings, and related character state;
-- `_characters.ini`, `eqlsPlayerData.ini`, and `notes.txt`;
-- supported `.ini` and `.txt` files beneath `userdata` and `AudioTriggers`; and
-- the prior per-game Windows DPI compatibility value.
-
-Static game assets, patcher state, logs, and UI skin assets under `uifiles` are deliberately excluded. SpinFOURKAYYY never installs or replaces an EverQuest UI skin.
-
-After the scaling session ends, restoration waits until EverQuest Legends, LaunchPad, and Options Editor are closed. It then restores and checksum-verifies the complete pre-session snapshot automatically. If the game saved changed layouts, hotbars, macros, spell sets, keybinds, userdata, or settings during the temporary session, those newer copies are first preserved in a separate recovery backup. This is preservation, not a field-by-field merge.
-
-Backups live under:
-
-```text
-%LOCALAPPDATA%\SpinFOURKAYYY\backups\<timestamp-and-session-id>\
-```
-
-Recovery journals live under:
-
-```text
-%LOCALAPPDATA%\SpinFOURKAYYY\sessions\
-```
-
-If automatic restoration cannot finish, close Legends and its launcher, reopen SpinFOURKAYYY, and choose **Restore profile**. The journal and verified payload remain available for retry.
-
-Backing up the complete EverQuest Legends directory before any third-party customization is still recommended.
+Clarity changes apply to a live session automatically: the engine restarts its fullscreen output with the new strength in a few seconds, without touching the game.
 
 ## Fullscreen, Alt+Tab, and mouse behavior
 
@@ -85,7 +67,7 @@ Legends remains in windowed mode underneath a borderless output that fills the s
 
 The app binds the session to the exact EverQuest executable, process, window handle, window class, source size, target monitor, and owned Magpie process. It verifies the physical source/destination cursor map at the corners, center, and round trip. A session is not reported safe merely because a picture appeared.
 
-If the output, source identity, source resolution, native `UIScale=0`, target monitor, or mouse map becomes uncertain, SpinFOURKAYYY stops only its exact owned scaling session. If shutdown cannot yet be confirmed, it retains cleanup ownership and blocks another scaling attempt.
+If the output, source identity, source resolution, target monitor, or mouse map becomes uncertain, SpinFOURKAYYY stops only its exact owned scaling session. If shutdown cannot yet be confirmed, it retains cleanup ownership and blocks another scaling attempt.
 
 Do not use Alt+Enter as part of the workflow.
 
@@ -93,13 +75,11 @@ Do not use Alt+Enter as part of the workflow.
 
 [SpinUI](https://github.com/itsspin/spinips) is optional. **Current/default/custom UI** remains the normal choice even if SpinUI assets exist for another character.
 
-Strict SpinUI mode offers only validated source resolutions and requires the user to apply the matching SpinUI layout with EverQuest closed. SpinFOURKAYYY detects saved skin names for compatibility, but it never installs, auto-selects, or rewrites the SpinUI XML/TGA/DDS asset tree.
-
-Character layout/profile INIs are included in the safety snapshot regardless of which UI skin is active. Restoration returns the pre-session versions after preserving any session-era copies.
+Strict SpinUI mode offers only validated source resolutions and requires the user to apply the matching SpinUI layout with the SpinUI installer. SpinFOURKAYYY detects saved skin names for compatibility, but it never installs, auto-selects, or rewrites the SpinUI XML/TGA/DDS asset tree, and it validates — never resizes — a strict SpinUI client window.
 
 ## Filters and performance
 
-- **Native clarity** uses one RCAS pass at 100% source size.
+- **Native clarity** uses the adjustable RCAS clarity path at 100% source size.
 - **Adaptive FSR** is the default vendor-neutral upscaling path for fractional enlargement.
 - **Lanczos** is a lighter fallback for enlarged modes.
 - **Exact pixels** is intended only for a true 2× Comfort plan.

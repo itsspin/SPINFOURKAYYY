@@ -28,7 +28,6 @@ public partial class MainWindow : Window, IDisposable
     private readonly FourKayPreparationService _preparationService = new();
     private readonly FourKayLaunchService _launchService = new();
     private readonly FourKayJournalStore _journalStore = new();
-    private readonly EqClientConfigurationService _eqClientConfiguration = new();
     private readonly MagpieScalingWindowInspector _scalingInspector = new();
     private readonly ProcessDiscoveryService _processDiscovery = new();
     private readonly WindowDiscoveryService _windowDiscovery = new();
@@ -39,6 +38,8 @@ public partial class MainWindow : Window, IDisposable
         Stopwatch.GetTimestamp();
     private readonly DispatcherTimer _scalingHealthTimer;
     private readonly DispatcherTimer _liveScaleDebounceTimer;
+    private readonly DispatcherTimer _clarityDebounceTimer;
+    private bool _clarityReapplyPending;
     private CancellationTokenSource? _operationCancellation;
     private DisplaySnapshot? _display;
     private ResolutionPlan? _currentPlan;
@@ -63,11 +64,8 @@ public partial class MainWindow : Window, IDisposable
     private bool _allowCloseAfterCleanup;
     private bool _isUpdatingPresetCards;
     private bool _startupAutoAttachAttempted;
-    private bool _playerStateRestorePending;
     private FineUiScale? _pendingLiveScale;
     private int _activeRecoveryCount;
-    private DateTimeOffset _nextPlayerStateRestoreAttemptUtc =
-        DateTimeOffset.MinValue;
     private ScalingSessionSupervisionState _scalingSupervisionState =
         ScalingSessionSupervisionState.Active;
 
@@ -89,12 +87,6 @@ public partial class MainWindow : Window, IDisposable
             && _spinUiDetection.IsDetected
             && SpinUiLayoutReadyCheckBox.IsChecked == true);
 
-    private bool HasPreparedUiModeConflict =>
-        HasPendingPreparation
-        && (_activeState!.UiCompatibilityMode
-                == FourKayUiCompatibilityMode.UnspecifiedLegacy
-            || _activeState.UiCompatibilityMode != SelectedUiCompatibilityMode);
-
     public MainWindow()
     {
         InitializeComponent();
@@ -109,6 +101,11 @@ public partial class MainWindow : Window, IDisposable
             Interval = TimeSpan.FromMilliseconds(450),
         };
         _liveScaleDebounceTimer.Tick += LiveScaleDebounceTimer_Tick;
+        _clarityDebounceTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(800),
+        };
+        _clarityDebounceTimer.Tick += ClarityDebounceTimer_Tick;
         Loaded += MainWindow_Loaded;
         LocationChanged += MainWindow_LocationChanged;
         Closed += MainWindow_Closed;
@@ -196,10 +193,11 @@ public partial class MainWindow : Window, IDisposable
             {
                 SetStatus(
                     StatusTone.Ready,
-                    "READY · START LEGENDS FIRST",
-                    "No running Legends client was found. Start the game normally, "
-                        + "then reopen SpinFOURKAYYY for automatic scaling, or use "
-                        + "the launch control below.");
+                    "READY · START LEGENDS ANY WAY YOU LIKE",
+                    "No running Legends client was found. Start the game normally "
+                        + "and click Scale the running game, or use Start EverQuest "
+                        + "for me and scaling attaches automatically. Nothing in "
+                        + "your EverQuest folder is ever modified.");
             }
 
             return;
@@ -218,30 +216,14 @@ public partial class MainWindow : Window, IDisposable
             return;
         }
 
-        if (_activeRecoveryCount > 0 || HasPendingPreparation)
-        {
-            AdvancedExpander.IsExpanded = true;
-            SetStatus(
-                StatusTone.Warning,
-                "RUNNING GAME FOUND · SAVED PROFILE NEEDS ATTENTION",
-                "A reversible player-profile journal is still active. No running-game "
-                    + "setting was changed. Close Legends and its launcher normally; "
-                    + "the verified pre-session profile will restore automatically.");
-            return;
-        }
-
         StartupGameCandidate candidate = candidates[0];
         LegendsPathTextBox.Text = candidate.EqDirectory;
-        AdvancedExpander.IsExpanded = true;
-        SetStatus(
-            StatusTone.Info,
-            "RUNNING LEGENDS FOUND · SAFE RESTART REQUIRED",
-            "Live window stretching cannot make EverQuest rebuild its UI or renderer; "
-                + "it only blurs the existing frame. Exit Legends normally, choose "
-                + "Native clarity or an exact 1% size, then use Launch. The complete "
-                + "player profile is protected before the real source resolution "
-                + "changes.");
-        await Task.CompletedTask.ConfigureAwait(true);
+        await RunOperationAsync(
+            "SCALING THE RUNNING GAME",
+            "A running EverQuest Legends client was found. Applying live scaling "
+                + "without touching eqclient.ini or any saved UI file…",
+            token => AutoAttachRunningGameCoreAsync(candidate, token))
+            .ConfigureAwait(true);
     }
 
     private async Task AutoAttachRunningGameCoreAsync(
@@ -289,7 +271,7 @@ public partial class MainWindow : Window, IDisposable
         {
             throw new InvalidOperationException(
                 "The verified Legends window is minimized. Restore it in windowed "
-                    + "mode, then restart SpinFOURKAYYY. Nothing was resized.");
+                    + "mode, then click Scale the running game. Nothing was resized.");
         }
 
         WindowDescriptor sourceWindow =
@@ -339,8 +321,8 @@ public partial class MainWindow : Window, IDisposable
         {
             throw new InvalidOperationException(
                 "The Legends window spans displays ambiguously. Move it fully onto "
-                    + "the display you want to use, then restart SpinFOURKAYYY. "
-                    + "Nothing was resized.");
+                    + "the display you want to use, then click Scale the running "
+                    + "game. Nothing was resized.");
         }
 
         if (RectsMatch(
@@ -354,8 +336,8 @@ public partial class MainWindow : Window, IDisposable
         {
             throw new InvalidOperationException(
                 "Legends already appears maximized or fullscreen. Put it in normal "
-                    + "windowed mode, then restart SpinFOURKAYYY; the program will "
-                    + "create and validate the borderless fullscreen result itself.");
+                    + "windowed mode, then click Scale the running game; the program "
+                    + "creates and validates the borderless fullscreen result itself.");
         }
 
         PopulateDisplays();
@@ -636,6 +618,30 @@ public partial class MainWindow : Window, IDisposable
         {
             SetStatus(StatusTone.Info, "FILTER ADJUSTED", filterNotice);
         }
+
+        QueuePendingLiveScale();
+    }
+
+    /// <summary>
+    /// While a generic/custom-UI session is active, slider movement applies to
+    /// the running game after a short debounce — no restart, no INI write.
+    /// </summary>
+    private void QueuePendingLiveScale()
+    {
+        if (!_isScaledSessionActive
+            || _scalingCleanupRequired
+            || _isCloseCleanupRunning
+            || _activeLaunch is not { } launch
+            || launch.UiCompatibilityMode
+                != FourKayUiCompatibilityMode.GenericOrCustom
+            || launch.EffectiveFilter == ScalingFilter.NearestNeighbor)
+        {
+            return;
+        }
+
+        _pendingLiveScale = FineUiScale.FromSlider(FineScaleSlider.Value);
+        _liveScaleDebounceTimer.Stop();
+        _liveScaleDebounceTimer.Start();
     }
 
     private void FineScaleStep_Click(object sender, RoutedEventArgs e)
@@ -683,6 +689,82 @@ public partial class MainWindow : Window, IDisposable
                 expectedLaunch,
                 token))
             .ConfigureAwait(true);
+    }
+
+    private void ClaritySlider_ValueChanged(
+        object sender,
+        RoutedPropertyChangedEventArgs<double> e)
+    {
+        _ = sender;
+        _ = e;
+        if (!IsInitialized)
+        {
+            return;
+        }
+
+        ClarityValueText.Text =
+            $"{Math.Round(ClaritySlider.Value):0}%";
+        if (!IsLoaded || _isUpdatingPresetCards)
+        {
+            return;
+        }
+
+        if (_isScaledSessionActive
+            && !_scalingCleanupRequired
+            && !_isCloseCleanupRunning
+            && _activeLaunch is not null)
+        {
+            _clarityReapplyPending = true;
+            _clarityDebounceTimer.Stop();
+            _clarityDebounceTimer.Start();
+        }
+    }
+
+    private async void ClarityDebounceTimer_Tick(object? sender, EventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        _clarityDebounceTimer.Stop();
+        if (!_clarityReapplyPending
+            || !_isScaledSessionActive
+            || _scalingCleanupRequired
+            || _isCloseCleanupRunning
+            || _activeLaunch is null)
+        {
+            _clarityReapplyPending = false;
+            return;
+        }
+
+        if (_isBusy)
+        {
+            _clarityDebounceTimer.Start();
+            return;
+        }
+
+        _clarityReapplyPending = false;
+        await RunOperationAsync(
+            "APPLYING CLARITY STRENGTH",
+            $"Restarting the fullscreen output at "
+                + $"{Math.Round(ClaritySlider.Value):0}% clarity…",
+            ReapplyClarityCoreAsync).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// The engine reads its sharpening strength at startup, so a live clarity
+    /// change stops the exact owned output and immediately re-attaches at the
+    /// same size with the new strength. No game restart, no INI write.
+    /// </summary>
+    private async Task ReapplyClarityCoreAsync(CancellationToken cancellationToken)
+    {
+        if (!_isScaledSessionActive
+            || _scalingCleanupRequired
+            || _activeLaunch is null)
+        {
+            return;
+        }
+
+        await StopScalingCoreAsync(cancellationToken).ConfigureAwait(true);
+        await AttachCoreAsync(cancellationToken).ConfigureAwait(true);
     }
 
     private void TargetDisplayComboBox_SelectionChanged(
@@ -847,9 +929,10 @@ public partial class MainWindow : Window, IDisposable
         _ = e;
 
         await RunOperationAsync(
-            "PREPARING",
-            "Checking saved display setup and preparing readable 4K…",
-            PrepareResetAndLaunchCoreAsync).ConfigureAwait(true);
+            "STARTING EVERQUEST",
+            "Starting the normal Legends launcher; live scaling attaches "
+                + "automatically when the game window appears…",
+            LaunchThenAutoScaleCoreAsync).ConfigureAwait(true);
     }
 
     private async void Attach_Click(object sender, RoutedEventArgs e)
@@ -978,6 +1061,8 @@ public partial class MainWindow : Window, IDisposable
         _scalingHealthTimer.Stop();
         _liveScaleDebounceTimer.Stop();
         _pendingLiveScale = null;
+        _clarityDebounceTimer.Stop();
+        _clarityReapplyPending = false;
         _operationCancellation?.Cancel();
         SetStatus(
             StatusTone.Working,
@@ -1047,6 +1132,8 @@ public partial class MainWindow : Window, IDisposable
         _scalingHealthTimer.Tick -= ScalingHealthTimer_Tick;
         _liveScaleDebounceTimer.Stop();
         _liveScaleDebounceTimer.Tick -= LiveScaleDebounceTimer_Tick;
+        _clarityDebounceTimer.Stop();
+        _clarityDebounceTimer.Tick -= ClarityDebounceTimer_Tick;
         _operationCancellation?.Dispose();
         _operationCancellation = null;
         DisposeLaunchHandles(_activeLaunch);
@@ -1061,13 +1148,7 @@ public partial class MainWindow : Window, IDisposable
         _ = sender;
         _ = e;
 
-        bool profileRestoreReady =
-            _playerStateRestorePending
-            && _activeState is not null
-            && _activeLaunch is null;
-        if ((!_isScaledSessionActive
-                && !_scalingCleanupRequired
-                && !profileRestoreReady)
+        if ((!_isScaledSessionActive && !_scalingCleanupRequired)
             || _isBusy
             || _isCloseCleanupRunning
             || _isScalingHealthCheckRunning)
@@ -1088,18 +1169,16 @@ public partial class MainWindow : Window, IDisposable
                 {
                     await RetryPendingScalingCleanupAsync().ConfigureAwait(true);
                 }
-                else
-                {
-                    await TryRestorePlayerStateAfterExitAsync().ConfigureAwait(true);
-                }
 
                 return;
             }
 
             MagpieScalingWindowInspection inspection =
                 _scalingInspector.Inspect(activeLaunch.SourceWindow.Handle);
-            (bool nativeUiScaleSafe, string? nativeUiScaleIssue) =
-                await ReadNativeUiScaleHealthAsync().ConfigureAwait(true);
+            // Player configuration is never watched or enforced: whatever the
+            // game saves to eqclient.ini during play is the player's business.
+            const bool nativeUiScaleSafe = true;
+            const string? nativeUiScaleIssue = null;
             if (!ReferenceEquals(_activeLaunch, activeLaunch))
             {
                 return;
@@ -1212,82 +1291,6 @@ public partial class MainWindow : Window, IDisposable
 
         CompleteScalingOwnership(
             "The pending fullscreen engine and portable configuration are confirmed clean.");
-    }
-
-    private async Task TryRestorePlayerStateAfterExitAsync()
-    {
-        if (!_playerStateRestorePending
-            || _activeState is null
-            || DateTimeOffset.UtcNow < _nextPlayerStateRestoreAttemptUtc)
-        {
-            return;
-        }
-
-        _nextPlayerStateRestoreAttemptUtc =
-            DateTimeOffset.UtcNow.AddSeconds(5);
-        SetStatus(
-            StatusTone.Working,
-            "RESTORING YOUR PLAYER PROFILE",
-            "Fullscreen has stopped. SpinFOURKAYYY is checking that EverQuest "
-                + "Legends, LaunchPad, and Options Editor are closed before restoring "
-                + "the verified pre-session layout, hotbars, socials, spell sets, "
-                + "keybinds, and client settings.");
-        try
-        {
-            int restoredCount = await RestoreAllActiveJournalsAsync(
-                CancellationToken.None).ConfigureAwait(true);
-            _playerStateRestorePending = _activeState is not null;
-            if (!_playerStateRestorePending)
-            {
-                SetStatus(
-                    StatusTone.Ready,
-                    "PLAYER PROFILE RESTORED",
-                    $"{restoredCount} saved "
-                        + (restoredCount == 1 ? "profile snapshot was" : "profile snapshots were")
-                        + " restored and checksum-verified. Your pre-session window "
-                        + "layout, hotbars, socials, spell sets, keybinds, userdata, "
-                        + "and client settings are back in place.");
-            }
-        }
-        catch (Exception exception) when (IsExpectedUserFacingFailure(exception))
-        {
-            _playerStateRestorePending = _activeState is not null;
-            SetStatus(
-                StatusTone.Info,
-                "WAITING TO RESTORE YOUR PROFILE",
-                "Close EverQuest Legends, LaunchPad, and Options Editor normally. "
-                    + "The verified profile backup remains intact and restoration "
-                    + "will retry automatically. " + exception.Message);
-        }
-    }
-
-    private async Task<(bool IsSafe, string? Issue)> ReadNativeUiScaleHealthAsync()
-    {
-        try
-        {
-            string eqDirectory = _activeState?.EqDirectory
-                ?? LegendsPathTextBox.Text.Trim();
-            EqClientVideoSettings settings =
-                await _eqClientConfiguration.ReadAsync(
-                    Path.Combine(eqDirectory, "eqclient.ini"))
-                    .ConfigureAwait(true);
-            bool isSafe =
-                settings.NativeUiScaleStatus == NativeUiScaleStatus.Valid
-                && settings.NativeUiScaleIndex == 0;
-            return isSafe
-                ? (true, null)
-                : (
-                    false,
-                    "The saved Legends native UI scale is no longer verified "
-                        + "as 1x (UIScale=0).");
-        }
-        catch (Exception exception) when (IsExpectedUserFacingFailure(exception))
-        {
-            return (
-                false,
-                "The saved Legends native UI scale could not be rechecked: "
-                    + exception.Message);
-        }
     }
 
     private static bool IsProcessAlive(Process process)
@@ -1591,7 +1594,7 @@ public partial class MainWindow : Window, IDisposable
             {
                 SetStatus(
                     StatusTone.Error,
-                    "SPINUI CHECK FAILED — PREPARE BLOCKED",
+                    "SPINUI CHECK FAILED — SCALING BLOCKED",
                     _spinUiDetection.Issue
                         ?? "SpinUI compatibility could not be confirmed reliably.");
             }
@@ -1639,7 +1642,7 @@ public partial class MainWindow : Window, IDisposable
                 SetStatus(
                     StatusTone.Ready,
                     "READY",
-                    "Choose a UI size, then launch.");
+                    "Choose a UI size; it applies live to the running game.");
             }
         }
         catch (Exception exception) when (
@@ -1668,7 +1671,7 @@ public partial class MainWindow : Window, IDisposable
             ReadabilityDescriptionText.Text =
                 "Native clarity keeps UI size at 100% and sharpens the visible frame. "
                 + "Above 100%, UI, visible nameplates, artwork, hitboxes, and clicks "
-                + "scale together after a safe restart.";
+                + "scale together — applied live to the running game.";
 
             ComfortPresetRadio.Visibility = Visibility.Visible;
             BalancedPresetRadio.Visibility = Visibility.Visible;
@@ -1690,11 +1693,10 @@ public partial class MainWindow : Window, IDisposable
             NativeClarityTitleText.Text = "Native clarity";
             NativeClarityDescriptionText.Text =
                 "100% UI · sharper visible names";
-            FineScaleTitleText.Text = _isScaledSessionActive
-                ? "Choose the next launch size"
-                : "Fine-tune the next launch";
-            FineScaleHintText.Text =
-                "100% keeps native size; 101%-133% keeps the most world detail.";
+            FineScaleTitleText.Text = "Fine UI sizing";
+            FineScaleHintText.Text = _isScaledSessionActive
+                ? "Move the slider; the running game follows within a moment."
+                : "100% keeps native size; 101%-133% keeps the most world detail.";
 
             ComfortResolutionText.Text = FormatPlan(
                 _resolutionPlanner.CreateCustomPlan(target, 2.0, ScalingFilter.Fsr));
@@ -1705,41 +1707,18 @@ public partial class MainWindow : Window, IDisposable
             NativeClarityResolutionText.Text =
                 $"{FormatPixels(target)} native · one-pass RCAS clarity";
             _spinUiPlans = [];
-            FourKayLaunchResult? liveLaunch =
-                _isScaledSessionActive ? _activeLaunch : null;
-            _currentPlan = liveLaunch is not null
-                ? CreateActiveResolutionPlan(liveLaunch)
-                : CreateSelectedPlan(target);
-            bool attachWaitingForRecovery =
-                HasPendingPreparation
-                && !(_activeRecoveryCount == 1
-                    && _activeState?.Status == FourKayJournalStatus.Prepared
-                    && IsPreparedPlanCompatibleWithSpinUi());
+            _currentPlan = CreateSelectedPlan(target);
             FineScaleUsageText.Text = _isScaledSessionActive
-                ? "Current session is locked; changes apply after a safe restart."
-                    : attachWaitingForRecovery
-                        ? "Launch restores the old profile before preparing this size."
-                        : "Launch uses this real render size; no UI profile is selected.";
-            FineScaleValueText.Text = liveLaunch is not null
-                    ? $"{FormatUiPercent(_currentPlan.ActualUiScale)} current"
-                    : FormatUiPercent(_currentPlan.ActualUiScale);
-            FineScaleSourceText.Text = liveLaunch is not null
-                    ? $"{FormatPixels(_currentPlan.SourceResolution)} active"
-                    : $"{FormatPixels(_currentPlan.SourceResolution)} source";
-            if (liveLaunch is not null)
-            {
-                FineScaleHintText.Text =
-                    "The current renderer is locked. Stop, exit Legends normally, "
-                        + "then select and launch the new size.";
-            }
-
+                ? "Live — the running game resizes to this render size."
+                : "Applies instantly to the running game; no saved file changes.";
+            FineScaleValueText.Text =
+                FormatUiPercent(_currentPlan.ActualUiScale);
+            FineScaleSourceText.Text =
+                $"{FormatPixels(_currentPlan.SourceResolution)} source";
             PipelineSourceLabel.Text = _isScaledSessionActive
                 ? "Legends renders now"
-                : "Legends renders after launch";
+                : "Legends will render";
 
-            ChatTextLabel.Text = "Chat text";
-            SpinUiChatHintText.Visibility = Visibility.Collapsed;
-            ChatTextComboBox.ToolTip = null;
         }
         finally
         {
@@ -1865,12 +1844,6 @@ public partial class MainWindow : Window, IDisposable
                 + " selects spinui_reloaded. This confirms the skin, not which "
                 + "character layout is currently loaded.";
             SpinUiLayoutReadyCheckBox.Visibility = Visibility.Visible;
-            ChatTextLabel.Text = "Per-window chat font";
-            ChatTextComboBox.SelectedIndex = 0;
-            ChatTextComboBox.ToolTip =
-                "SpinUI stores chat fonts per window. Right-click each chat window "
-                + "in game and choose Font.";
-            SpinUiChatHintText.Visibility = Visibility.Visible;
             NativeClarityPresetRadio.Visibility = Visibility.Collapsed;
 
             RadioButton[] radios =
@@ -1936,7 +1909,7 @@ public partial class MainWindow : Window, IDisposable
                 plans.Length > 0 ? Visibility.Collapsed : Visibility.Visible;
             NoCompatiblePresetText.Text =
                 $"No validated SpinUI source resolution safely matches "
-                + $"{FormatPixels(target)}. Preparation is blocked.";
+                + $"{FormatPixels(target)}. SpinUI scaling is blocked.";
 
             _currentPlan = plans.Length > 0
                 ? CreateSelectedPlan(target)
@@ -1945,7 +1918,7 @@ public partial class MainWindow : Window, IDisposable
             {
                 string source = FormatPixels(selectedPlan.SourceResolution);
                 SpinUiLayoutInstructionText.Text =
-                    $"Before Prepare, use the SpinUI installer to apply its {source} "
+                    $"Before scaling, use the SpinUI installer to apply its {source} "
                     + "layout profile to the character you will play. SpinFOURKAYYY "
                     + "does not modify or auto-select character UI layouts. Restore "
                     + "will not undo that installer choice; afterward, reapply the "
@@ -1984,9 +1957,9 @@ public partial class MainWindow : Window, IDisposable
             NoCompatiblePresetText.Visibility = Visibility.Visible;
             NoCompatiblePresetText.Text =
                 "SpinUI assets may be active, but layout detection was not reliable. "
-                + "No resolution will be prepared.";
+                + "No SpinUI scaling will be started.";
             ReadabilityEyebrowText.Text = "03 / SPINUI CHECK REQUIRED";
-            ReadabilityHeadingText.Text = "Resolution preparation is blocked";
+            ReadabilityHeadingText.Text = "SpinUI scaling is blocked";
             ReadabilityDescriptionText.Text =
                 "Close tools that are locking the UI profile, then reselect the Legends "
                 + "folder so compatibility can be checked again.";
@@ -1997,12 +1970,9 @@ public partial class MainWindow : Window, IDisposable
             SpinUiDetectionDetailText.Text = _spinUiDetection.Issue
                 ?? "The active UI skin could not be determined reliably.";
             SpinUiLayoutInstructionText.Text =
-                "Preparation is fail-closed; no character UI INI will be changed.";
+                "SpinUI mode is fail-closed; no character UI INI is ever changed.";
             SpinUiLayoutReadyCheckBox.IsChecked = false;
             SpinUiLayoutReadyCheckBox.Visibility = Visibility.Collapsed;
-            ChatTextLabel.Text = "Per-window chat font";
-            ChatTextComboBox.SelectedIndex = 0;
-            SpinUiChatHintText.Visibility = Visibility.Visible;
         }
         finally
         {
@@ -2117,7 +2087,7 @@ public partial class MainWindow : Window, IDisposable
         {
             SetStatus(
                 StatusTone.Error,
-                "SPINUI CHECK FAILED — PREPARE BLOCKED",
+                "SPINUI CHECK FAILED — SCALING BLOCKED",
                 _spinUiDetection.Issue
                     ?? "SpinUI compatibility could not be confirmed reliably.");
             return;
@@ -2144,7 +2114,7 @@ public partial class MainWindow : Window, IDisposable
             confirmed ? "SPINUI PLAN READY" : "SPINUI LAYOUT CONFIRMATION NEEDED",
             confirmed
                 ? $"Validated {FormatPixels(_currentPlan.SourceResolution)} SpinUI "
-                    + "source selected. Prepare is unlocked."
+                    + "source selected. Scaling is unlocked."
                     + (_spinUiFilterNotice is null
                         ? string.Empty
                         : " " + _spinUiFilterNotice)
@@ -2214,21 +2184,15 @@ public partial class MainWindow : Window, IDisposable
         };
     }
 
-    private int SelectedChatIncrease()
-    {
-        if (UsesStrictSpinUiMode)
-        {
-            return 0;
-        }
-
-        string? tag = (ChatTextComboBox.SelectedItem as ComboBoxItem)?.Tag as string;
-        return tag switch
-        {
-            "OneStep" => 1,
-            "TwoSteps" => 2,
-            _ => 0,
-        };
-    }
+    /// <summary>
+    /// Maps the clarity slider (0–200%) to the engine's RCAS strength (0–2).
+    /// Values above 100% add a second sharpening pass.
+    /// </summary>
+    private double SelectedClaritySharpness() =>
+        Math.Clamp(
+            Math.Round(ClaritySlider.Value) / 100.0,
+            0.0,
+            2.0);
 
     private string? NormalizeFilterForPreset()
     {
@@ -2282,17 +2246,6 @@ public partial class MainWindow : Window, IDisposable
             !UsesStrictSpinUiMode
             || (_spinUiDetection.IsReliable && _spinUiDetection.IsDetected);
         bool uiSessionConfirmed = IsUiSessionConfirmationSatisfied;
-        bool pending = _activeState?.Status
-            is FourKayJournalStatus.Preparing or FourKayJournalStatus.Prepared;
-        bool prepared = _activeState?.Status == FourKayJournalStatus.Prepared;
-        bool preparedModeConflict = HasPreparedUiModeConflict;
-        bool reusablePreparedState =
-            _activeRecoveryCount == 1
-            && prepared
-            && !preparedModeConflict
-            && IsPreparedPlanCompatibleWithSpinUi();
-        bool resetBeforeLaunch = pending && !reusablePreparedState;
-        bool attachBlockedByRecovery = pending && !reusablePreparedState;
         bool controlsAvailable = !_isBusy && !_isCloseCleanupRunning;
         bool configurationAvailable =
             controlsAvailable && !_isScaledSessionActive && !_scalingCleanupRequired;
@@ -2307,92 +2260,89 @@ public partial class MainWindow : Window, IDisposable
             engineReady = false;
         }
 
-        PrepareLaunchButton.IsEnabled =
-            controlsAvailable
-            && !_isScaledSessionActive
-            && !_scalingCleanupRequired
-            && clientValid
+        bool scaleReady =
+            clientValid
             && engineReady
             && uiModeReady
             && uiSessionConfirmed
             && planReady;
+        PrepareLaunchButton.IsEnabled =
+            controlsAvailable
+            && !_isScaledSessionActive
+            && !_scalingCleanupRequired
+            && scaleReady;
         AttachButton.IsEnabled =
             controlsAvailable
             && (_isScaledSessionActive
                 || _scalingCleanupRequired
-                || (UsesStrictSpinUiMode
-                    && clientValid
-                    && engineReady
-                    && uiModeReady
-                    && uiSessionConfirmed
-                    && planReady
-                    && (!pending || reusablePreparedState)));
+                || scaleReady);
         RestoreButton.IsEnabled =
-            controlsAvailable && (_activeRecoveryCount > 0 || pending);
+            controlsAvailable
+            && !_isScaledSessionActive
+            && !_scalingCleanupRequired
+            && _activeRecoveryCount > 0;
 
         string selectedPercent = _currentPlan is null
             ? "selected size"
             : FormatUiPercent(_currentPlan.ActualUiScale);
         PrepareLaunchButton.Content = _isScaledSessionActive
-            ? "Readable-4K fullscreen is already active"
+            ? "Live scaling is already active"
             : _scalingCleanupRequired
-                ? "Finish scaling cleanup before another launch"
-                : resetBeforeLaunch
-                    ? $"Restore profile & launch at {selectedPercent}"
-                    : UsesStrictSpinUiMode
-                        ? $"Launch EverQuest with {selectedPercent} SpinUI"
-                        : _currentPlan?.ActualUiScale <= 1.005
-                            ? "Launch Native clarity · 100% UI"
-                            : $"Launch EverQuest with {selectedPercent} UI";
+                ? "Finish scaling cleanup first"
+                : "Start EverQuest for me";
+        PrepareLaunchButton.ToolTip =
+            "Starts the normal Legends launcher, then applies the selected live "
+                + "scaling automatically when the game window appears. No saved "
+                + "file is modified.";
         AttachButton.Content = _isScaledSessionActive
             ? "Stop fullscreen scaling"
             : _scalingCleanupRequired
                 ? "Retry scaling cleanup"
-                : attachBlockedByRecovery
-                    ? "Saved profile: launch first"
                 : UsesStrictSpinUiMode
-                    ? "Attach matching SpinUI window"
-                    : "Restart required for real scaling";
+                    ? "Scale matching SpinUI window"
+                    : _currentPlan?.ActualUiScale <= 1.005
+                        ? "Apply Native clarity now"
+                        : $"Scale the running game to {selectedPercent}";
         AttachButton.ToolTip =
             _isScaledSessionActive || _scalingCleanupRequired
                 ? null
-                : attachBlockedByRecovery
-                    ? "Close EverQuest if it is running, then use Launch. Launch resets "
-                        + "the older saved display setup before launching at the "
-                        + "selected UI size."
                 : UsesStrictSpinUiMode
                     ? "Requires the running physical client size to match the "
                         + "selected SpinUI source exactly."
-                    : "EverQuest must start at the selected real source resolution. "
-                        + "Live window stretching is disabled because it does not "
-                        + "rebuild the UI and makes the frame blurry.";
+                    : "Applies instantly to the running EverQuest window. "
+                        + "eqclient.ini and your saved UI files are never changed, "
+                        + "so everything you save in game persists normally.";
         RestoreButton.Content = _activeRecoveryCount > 1
             ? $"Restore {_activeRecoveryCount} profiles"
             : "Restore profile";
         LegendsPathTextBox.IsReadOnly = !configurationAvailable;
         BrowseButton.IsEnabled = configurationAvailable;
         TargetDisplayComboBox.IsEnabled = configurationAvailable;
-        CurrentUiModeRadioButton.IsEnabled =
-            controlsAvailable && !_isScaledSessionActive && !_scalingCleanupRequired;
-        SpinUiModeRadioButton.IsEnabled =
-            controlsAvailable && !_isScaledSessionActive && !_scalingCleanupRequired;
-        ComfortPresetRadio.IsEnabled = configurationAvailable;
-        BalancedPresetRadio.IsEnabled = configurationAvailable;
-        GentlePresetRadio.IsEnabled = configurationAvailable;
-        NativeClarityPresetRadio.IsEnabled = configurationAvailable;
-        FineScaleSlider.IsEnabled =
-            configurationAvailable && !UsesStrictSpinUiMode;
+        CurrentUiModeRadioButton.IsEnabled = configurationAvailable;
+        SpinUiModeRadioButton.IsEnabled = configurationAvailable;
+        ComfortPresetRadio.IsEnabled = controlsAvailable;
+        BalancedPresetRadio.IsEnabled = controlsAvailable;
+        GentlePresetRadio.IsEnabled = controlsAvailable;
+        NativeClarityPresetRadio.IsEnabled = controlsAvailable;
+        bool liveSliderAvailable =
+            controlsAvailable
+            && !UsesStrictSpinUiMode
+            && (!_isScaledSessionActive
+                || (_activeLaunch is { } sliderLaunch
+                    && sliderLaunch.UiCompatibilityMode
+                        == FourKayUiCompatibilityMode.GenericOrCustom
+                    && sliderLaunch.EffectiveFilter
+                        != ScalingFilter.NearestNeighbor));
+        FineScaleSlider.IsEnabled = liveSliderAvailable;
         FineScaleMinusButton.IsEnabled = FineScaleSlider.IsEnabled;
         FineScalePlusButton.IsEnabled = FineScaleSlider.IsEnabled;
         FineScaleSlider.ToolTip = _isScaledSessionActive
-            ? "The active EverQuest renderer is locked. Stop scaling, exit Legends "
-                + "normally, then select the next launch size."
-            : "Selects the real source resolution for the next safe launch in exact "
-                + "one-percent steps.";
+            ? "Adjusts the live session in exact one-percent steps. The running "
+                + "game window follows after a short pause."
+            : "Selects the real render size in exact one-percent steps; it is "
+                + "applied live when scaling is active.";
         QualityComboBox.IsEnabled = configurationAvailable;
-        ChatTextComboBox.IsEnabled =
-            configurationAvailable
-            && !UsesStrictSpinUiMode;
+        ClaritySlider.IsEnabled = controlsAvailable;
         SpinUiLayoutReadyCheckBox.IsEnabled =
             controlsAvailable
             && UsesStrictSpinUiMode
@@ -2401,11 +2351,8 @@ public partial class MainWindow : Window, IDisposable
             && _currentPlan is not null
             && !_isScaledSessionActive
             && !_scalingCleanupRequired;
-        RefreshUiModePresentation(preparedModeConflict);
-        RefreshRecoveryGatePresentation(
-            pending,
-            reusablePreparedState,
-            resetBeforeLaunch);
+        RefreshUiModePresentation();
+        RefreshRecoveryGatePresentation();
 
         if (!clientValid && IsLoaded && configurationAvailable)
         {
@@ -2435,7 +2382,7 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void RefreshUiModePresentation(bool preparedModeConflict)
+    private void RefreshUiModePresentation()
     {
         SpinUiDetectionBadgeText.Text = _spinUiDetection.Status switch
         {
@@ -2474,42 +2421,15 @@ public partial class MainWindow : Window, IDisposable
                     + "complete game frame. This app does not install, select, or "
                     + "rewrite a UI profile, character-layout file, or keybind entry.";
 
-        UiModeConflictBorder.Visibility = preparedModeConflict
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        if (!preparedModeConflict || _activeState is null)
-        {
-            UiModeConflictText.Text = string.Empty;
-            return;
-        }
-
-        string preparedMode = _activeState.UiCompatibilityMode switch
-        {
-            FourKayUiCompatibilityMode.GenericOrCustom =>
-                "Current/default/custom UI",
-            FourKayUiCompatibilityMode.SpinUiStrict => "SpinUI strict",
-            _ => "an older unclassified UI mode",
-        };
-        string selectedMode = UsesStrictSpinUiMode
-            ? "SpinUI strict"
-            : "Current/default/custom UI";
-        UiModeConflictText.Text =
-            $"This saved display preparation belongs to {preparedMode}, while "
-            + $"{selectedMode} is selected. It cannot be relabeled, so Launch will "
-            + "restore the verified pre-session player profile first and then use "
-            + "the controls shown here. Any session-era player-state copy is "
-            + "preserved in a recovery backup before layout, hotbars, macros, "
-            + "keybinds, userdata, and client settings are restored.";
+        UiModeConflictBorder.Visibility = Visibility.Collapsed;
+        UiModeConflictText.Text = string.Empty;
     }
 
-    private void RefreshRecoveryGatePresentation(
-        bool pending,
-        bool reusablePreparedState,
-        bool resetBeforeLaunch)
+    private void RefreshRecoveryGatePresentation()
     {
         LauncherPanel.Visibility = Visibility.Visible;
         bool showRecoveryNotice =
-            (_activeRecoveryCount > 0 || pending)
+            _activeRecoveryCount > 0
             && !_isBusy
             && !_isScaledSessionActive
             && !_scalingCleanupRequired;
@@ -2521,82 +2441,18 @@ public partial class MainWindow : Window, IDisposable
             return;
         }
 
-        int count = Math.Max(
-            _activeRecoveryCount,
-            HasPendingPreparation ? 1 : 0);
+        int count = Math.Max(1, _activeRecoveryCount);
         RecoveryCountText.Text =
-            $"{count} SAVED PLAYER PROFILE "
-            + (count == 1 ? "FOUND" : "SNAPSHOTS FOUND");
-        string selectedSize = _currentPlan is null
-            ? "the selected size"
-            : FormatUiPercent(_currentPlan.ActualUiScale);
-        RecoveryDetailText.Text = reusablePreparedState
-            ? $"The newest saved setup exactly matches {selectedSize}, this display, "
-                + "UI mode, and filter, so Launch can reuse it directly. Restore "
-                + "remains available for the checksum-verified pre-session profile."
-            : resetBeforeLaunch
-                ? $"Keep adjusting the controls normally. Launch will safely restore "
-                    + $"all {count} saved player-profile "
-                    + (count == 1 ? "snapshot" : "snapshots")
-                    + $" newest-first, then start EverQuest at {selectedSize}. "
-                    + "Any session-era layout, hotbar, macro, spell-set, userdata, "
-                    + "keybind, or client-settings files are preserved first."
-                : "Verified player-profile recovery is available and will retry "
-                    + "automatically after Legends and its launcher are closed.";
-    }
-
-    private bool IsPreparedPlanCompatibleWithSpinUi()
-    {
-        if (UsesStrictSpinUiMode
-            && _spinUiDetection.Status == SpinUiDetectionStatus.Uncertain)
-        {
-            return false;
-        }
-
-        ResolutionPlan? preparedPlan = _activeState?.Status == FourKayJournalStatus.Prepared
-            ? _activeState.ResolutionPlan
-            : null;
-        if (preparedPlan is null
-            || _display?.Resolution != preparedPlan.TargetResolution)
-        {
-            return false;
-        }
-
-        FourKayUiCompatibilityMode preparedMode =
-            _activeState!.UiCompatibilityMode;
-        if (preparedMode == FourKayUiCompatibilityMode.UnspecifiedLegacy)
-        {
-            return false;
-        }
-
-        if (preparedMode != SelectedUiCompatibilityMode)
-        {
-            return false;
-        }
-
-        if (preparedMode == FourKayUiCompatibilityMode.GenericOrCustom)
-        {
-            return _currentPlan == preparedPlan;
-        }
-
-        if (!_spinUiDetection.IsDetected || !UsesStrictSpinUiMode)
-        {
-            return false;
-        }
-
-        if (_currentPlan is not { } confirmedPlan
-            || preparedPlan.SourceResolution != confirmedPlan.SourceResolution
-            || preparedPlan.TargetResolution != confirmedPlan.TargetResolution
-            || !_spinUiResolutionPlanner.IsValidatedSource(
-                preparedPlan.SourceResolution))
-        {
-            return false;
-        }
-
-        return _spinUiPlans.Any(
-            plan => plan.SourceResolution == preparedPlan.SourceResolution
-                && plan.TargetResolution == preparedPlan.TargetResolution
-                && plan.Filter == preparedPlan.Filter);
+            $"{count} SAVED PLAYER-PROFILE "
+            + (count == 1 ? "SNAPSHOT FOUND" : "SNAPSHOTS FOUND");
+        RecoveryDetailText.Text =
+            "An older SpinFOURKAYYY version saved this pre-session backup before "
+                + "editing eqclient.ini. This version never edits or restores "
+                + "player files on its own, so your current settings and UI "
+                + "layouts always stay exactly as the game saved them. Use "
+                + "Restore now only if you want to roll back to the old backup "
+                + "(the game must be closed; current files are preserved in a "
+                + "recovery copy first).";
     }
 
     private async Task RunOperationAsync(
@@ -2635,7 +2491,7 @@ public partial class MainWindow : Window, IDisposable
             SetStatus(
                 StatusTone.Warning,
                 "CANCELLED",
-                "The operation was cancelled. Existing verified backups were retained.");
+                "The operation was cancelled. No saved game file was changed.");
         }
         catch (MagpieScalingCleanupException exception)
         {
@@ -2669,153 +2525,99 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    private async Task PrepareResetAndLaunchCoreAsync(
+    /// <summary>
+    /// Convenience path that never prepares, backs up, or edits any player
+    /// file: it starts the normal LaunchPad, waits for the game window, and
+    /// then runs the same read-only live Attach used for a running client.
+    /// </summary>
+    private async Task LaunchThenAutoScaleCoreAsync(
         CancellationToken cancellationToken)
-    {
-        bool canReusePreparedState =
-            _activeRecoveryCount == 1
-            && _activeState?.Status == FourKayJournalStatus.Prepared
-            && IsPreparedPlanCompatibleWithSpinUi();
-        bool resetBeforeLaunch =
-            (_activeRecoveryCount > 0 || HasPendingPreparation)
-            && !canReusePreparedState;
-        _ = ValidatePrepareAndLaunchPreconditions(
-            ignorePreparedStateConflict: resetBeforeLaunch);
-        if (resetBeforeLaunch)
-        {
-            int restoredCount = await RestoreAllActiveJournalsAsync(
-                cancellationToken).ConfigureAwait(true);
-            SetStatus(
-                StatusTone.Working,
-                "PLAYER PROFILE RESTORED · PREPARING LAUNCH",
-                $"{restoredCount} verified player-profile "
-                    + (restoredCount == 1 ? "snapshot was" : "snapshots were")
-                    + " restored. Any session-era copies were preserved before the "
-                    + "pre-session layout, hotbars, macros, spell sets, keybinds, "
-                    + "userdata, and client settings were restored.");
-            RefreshSpinUiDetection(force: true);
-            RefreshDisplayAndPlan();
-        }
-
-        await PrepareAndLaunchCoreAsync(cancellationToken).ConfigureAwait(true);
-    }
-
-    private async Task PrepareAndLaunchCoreAsync(CancellationToken cancellationToken)
-    {
-        (string eqDirectory, string launcherPath, string magpieDirectory) =
-            ValidatePrepareAndLaunchPreconditions(
-                ignorePreparedStateConflict: false);
-        FourKayPreparedState prepared;
-
-        if (_activeState?.Status == FourKayJournalStatus.Prepared)
-        {
-            prepared = _activeState;
-        }
-        else
-        {
-            ResolutionPlan plan = _currentPlan
-                ?? throw new InvalidOperationException("Choose a valid display preset.");
-            DisplaySnapshot display = _display
-                ?? throw new InvalidOperationException("Choose a target display.");
-
-            try
-            {
-                prepared = await _preparationService.PrepareAsync(
-                    new FourKayPreparationRequest
-                    {
-                        EqDirectory = eqDirectory,
-                        StateDirectory = PathLocator.StateRoot,
-                        ResolutionPlan = plan,
-                        TargetMonitor = display.MonitorHandle,
-                        ChatFontSizeIncrease = SelectedChatIncrease(),
-                        UiCompatibilityMode = SelectedUiCompatibilityMode,
-                    },
-                    cancellationToken).ConfigureAwait(true);
-            }
-            catch (FourKayPreparationException exception)
-            {
-                _activeState = exception.State?.Status
-                    is FourKayJournalStatus.Preparing or FourKayJournalStatus.Prepared
-                        ? exception.State
-                        : null;
-                if (_activeState is not null)
-                {
-                    _activeRecoveryCount = Math.Max(1, _activeRecoveryCount);
-                    _playerStateRestorePending = true;
-                    _nextPlayerStateRestoreAttemptUtc = DateTimeOffset.MinValue;
-                }
-                throw;
-            }
-
-            _activeState = prepared;
-            _activeRecoveryCount = Math.Max(1, _activeRecoveryCount + 1);
-            _playerStateRestorePending = true;
-            _nextPlayerStateRestoreAttemptUtc = DateTimeOffset.MinValue;
-            RefreshActionAvailability();
-        }
-
-        SetStatus(
-            StatusTone.Working,
-            "WAITING FOR LEGENDS",
-            "The normal launcher is open. Finish patching/sign-in; fullscreen starts "
-                + "automatically when the stable game window appears.");
-
-        FourKayLaunchResult result = await _launchService.LaunchAndScaleAsync(
-            new FourKayLaunchRequest
-            {
-                PreparedState = prepared,
-                LauncherPath = launcherPath,
-                MagpieDirectory = magpieDirectory,
-                GameStartTimeout = TimeSpan.FromMinutes(15),
-                WindowTimeout = TimeSpan.FromMinutes(3),
-                ScalingTimeout = TimeSpan.FromSeconds(20),
-                RcasSharpness =
-                    prepared.ResolutionPlan.ActualUiScale <= 1.005
-                        ? 0.65
-                        : 0.75,
-            },
-            cancellationToken).ConfigureAwait(true);
-
-        ReplaceActiveLaunch(result);
-        string source = FormatPixels(result.Placement.RequestedClientSize);
-        string target = FormatPixels(result.ScalingInspection.MonitorBounds!.Value.Size);
-        SetScaledSessionState(
-            active: true,
-            $"Borderless fullscreen is active ({source} → {target}); "
-                + "the physical mouse map passed validation.",
-            result.Warnings);
-    }
-
-    private (string EqDirectory, string LauncherPath, string MagpieDirectory)
-        ValidatePrepareAndLaunchPreconditions(bool ignorePreparedStateConflict)
     {
         string eqDirectory = RequireValidLegendsDirectory();
         string launcherPath = Path.Combine(eqDirectory, "LaunchPad.exe");
         if (!File.Exists(launcherPath))
         {
             throw new FileNotFoundException(
-                "LaunchPad.exe was not found. Nothing was prepared or restored. "
+                "LaunchPad.exe was not found. Nothing was started. "
                     + "SpinFOURKAYYY will not bypass the normal Legends patcher; "
                     + "restore the launcher or choose the correct folder.",
                 launcherPath);
         }
 
-        string magpieDirectory = PathLocator.FindMagpieDirectory();
+        _ = PathLocator.FindMagpieDirectory();
         RefreshSpinUiDetection(force: true);
         RefreshDisplayAndPlan();
         _ = _currentPlan
             ?? throw new InvalidOperationException("Choose a valid display preset.");
         _ = _display
             ?? throw new InvalidOperationException("Choose a target display.");
-        EnsureSpinUiSessionIsReady(
-            "Prepare",
-            ignorePreparedStateConflict);
-        return (eqDirectory, launcherPath, magpieDirectory);
+        EnsureSpinUiSessionIsReady("Launch");
+
+        string eqGamePath = Path.Combine(eqDirectory, "eqgame.exe");
+        IReadOnlyList<ProcessDescriptor> existing =
+            _processDiscovery.FindByExecutablePath(eqGamePath);
+        if (existing.Count == 1)
+        {
+            SetStatus(
+                StatusTone.Working,
+                "GAME ALREADY RUNNING · SCALING IT",
+                "EverQuest Legends is already running, so the launcher was not "
+                    + "started again. Live scaling is attaching to the running "
+                    + "window without changing any saved file.");
+            await AttachCoreAsync(
+                cancellationToken,
+                WithVerifiableIdentity(existing[0])).ConfigureAwait(true);
+            return;
+        }
+
+        if (existing.Count > 1)
+        {
+            throw new InvalidOperationException(
+                "Multiple EverQuest Legends clients are already running. Close "
+                    + "the extra clients, then scale the remaining one.");
+        }
+
+        using (Process? launcher = Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = launcherPath,
+                WorkingDirectory = eqDirectory,
+                UseShellExecute = true,
+            }))
+        {
+            if (launcher is null)
+            {
+                throw new InvalidOperationException(
+                    "Windows did not start the Legends launcher.");
+            }
+        }
+
+        SetStatus(
+            StatusTone.Working,
+            "WAITING FOR LEGENDS",
+            "The normal launcher is open. Finish patching and sign-in; live "
+                + "scaling attaches automatically when the game window appears. "
+                + "eqclient.ini and your UI files are never modified.");
+        ProcessDescriptor gameProcess =
+            await _processDiscovery.WaitForExecutableAsync(
+                eqGamePath,
+                TimeSpan.FromMinutes(15),
+                cancellationToken).ConfigureAwait(true);
+        await AttachCoreAsync(
+            cancellationToken,
+            WithVerifiableIdentity(gameProcess)).ConfigureAwait(true);
     }
 
-    private void EnsureSpinUiSessionIsReady(
-        string actionName,
-        bool ignorePreparedStateConflict = false)
+    /// <summary>
+    /// Attach's exact-process pinning requires both the PID and the process
+    /// start time. When Windows withholds the start time, Attach instead
+    /// re-verifies that exactly one client is running.
+    /// </summary>
+    private static ProcessDescriptor? WithVerifiableIdentity(
+        ProcessDescriptor process) =>
+        process.StartTimeUtc is null ? null : process;
+
+    private void EnsureSpinUiSessionIsReady(string actionName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(actionName);
         string stoppedMessage = $"{actionName} was not started.";
@@ -2826,18 +2628,6 @@ public partial class MainWindow : Window, IDisposable
                 _spinUiDetection.Issue
                     ?? "SpinUI compatibility could not be checked reliably. "
                         + stoppedMessage);
-        }
-
-        if (!ignorePreparedStateConflict
-            && _activeState?.Status == FourKayJournalStatus.Prepared
-            && !IsPreparedPlanCompatibleWithSpinUi())
-        {
-            throw new InvalidOperationException(
-                $"The prepared {_activeState.ResolutionPlan.SourceResolution} source "
-                    + "is not compatible with the UI mode and display stored in its "
-                    + "recovery journal. Restore the original settings before "
-                    + "preparing a different mode. "
-                    + stoppedMessage);
         }
 
         if (!UsesStrictSpinUiMode)
@@ -2883,41 +2673,7 @@ public partial class MainWindow : Window, IDisposable
         CancellationToken cancellationToken,
         ProcessDescriptor? expectedAutomaticProcess = null)
     {
-        if (!UsesStrictSpinUiMode)
-        {
-            throw new InvalidOperationException(
-                "Current/default/custom UI scaling requires a safe restart. "
-                    + "EverQuest does not rebuild its renderer or UI when an external "
-                    + "tool resizes the running window, so live resizing is disabled "
-                    + "to prevent blur and false scaling. Exit Legends normally, "
-                    + "choose the size, then use Launch.");
-        }
-
         string eqDirectory = RequireValidLegendsDirectory();
-        EqClientVideoSettings settings = await _eqClientConfiguration.ReadAsync(
-            Path.Combine(eqDirectory, "eqclient.ini"),
-            cancellationToken).ConfigureAwait(true);
-        if (settings.NativeUiScaleStatus != NativeUiScaleStatus.Valid)
-        {
-            throw new InvalidDataException(
-                "Legends UIScale is missing, malformed, or outside the supported "
-                    + "0-4 range. Attach was stopped because native 1x cannot be "
-                    + "verified. Close the game and use Launch with this UI size, which "
-                    + "writes UIScale=0 reversibly.");
-        }
-
-        if (settings.NativeUiScaleStatus == NativeUiScaleStatus.Valid
-            && settings.NativeUiScaleIndex is int nativeUiScaleIndex
-            && nativeUiScaleIndex != 0)
-        {
-            throw new InvalidOperationException(
-                $"Legends native UI scaling is currently set to index "
-                    + $"{nativeUiScaleIndex} instead of 1x. Set Options > Display > "
-                    + "UI Scaling to 1x before Attach so native scaling and "
-                    + "SpinFOURKAYYY do not stack. Launch with this UI size handles this "
-                    + "reversibly when the game is closed.");
-        }
-
         RefreshSpinUiDetection(force: true);
         RefreshDisplayAndPlan();
         EnsureSpinUiSessionIsReady("Attach");
@@ -2946,7 +2702,7 @@ public partial class MainWindow : Window, IDisposable
                 UiCompatibilityMode = SelectedUiCompatibilityMode,
                 WindowTimeout = TimeSpan.FromSeconds(45),
                 ScalingTimeout = TimeSpan.FromSeconds(20),
-                RcasSharpness = 0.75,
+                RcasSharpness = SelectedClaritySharpness(),
             },
             cancellationToken).ConfigureAwait(true);
 
@@ -3039,15 +2795,6 @@ public partial class MainWindow : Window, IDisposable
             return;
         }
 
-        string eqClientIniPath = Path.Combine(
-            Path.GetDirectoryName(
-                launch.SourceWindow.ExecutablePath
-                    ?? throw new InvalidOperationException(
-                        "The active game window has no executable path binding."))
-                ?? throw new InvalidOperationException(
-                    "The active game executable has no parent directory."),
-            "eqclient.ini");
-
         FourKayLiveScaleResult result;
         try
         {
@@ -3055,7 +2802,6 @@ public partial class MainWindow : Window, IDisposable
                 new FourKayLiveScaleRequest
                 {
                     ActiveLaunch = launch,
-                    EqClientIniPath = eqClientIniPath,
                     RequestedPlan = requestedPlan,
                     WindowTimeout = TimeSpan.FromSeconds(10),
                 },
@@ -3150,25 +2896,6 @@ public partial class MainWindow : Window, IDisposable
         return Math.Min(
             (double)destination.Width / source.Width,
             (double)destination.Height / source.Height);
-    }
-
-    private static ResolutionPlan CreateActiveResolutionPlan(
-        FourKayLaunchResult launch)
-    {
-        PixelRect monitor = launch.Placement.Monitor.Bounds;
-        PixelRect destination = launch.ExpectedDestinationRegion;
-        PixelRect relativeDestination = new(
-            destination.X - monitor.X,
-            destination.Y - monitor.Y,
-            destination.Width,
-            destination.Height);
-        return new ResolutionPlan(
-            monitor.Size,
-            launch.Placement.RequestedClientSize,
-            relativeDestination,
-            CalculateActiveUiScale(launch),
-            launch.EffectiveFilter,
-            ResolutionPresetKind.Custom);
     }
 
     private void SyncFineScaleToActiveLaunch(FourKayLaunchResult launch)
@@ -3282,14 +3009,14 @@ public partial class MainWindow : Window, IDisposable
         _scalingCleanupRequired = false;
         _liveScaleDebounceTimer.Stop();
         _pendingLiveScale = null;
+        _clarityDebounceTimer.Stop();
+        _clarityReapplyPending = false;
         _isScaledSessionActive = false;
         ResetSessionUiConfirmations();
         RefreshDisplayAndPlan();
         SetScaledSessionState(active: false, message: message);
         if (_activeState is not null)
         {
-            _playerStateRestorePending = true;
-            _nextPlayerStateRestoreAttemptUtc = DateTimeOffset.MinValue;
             SetRecoveryStatus();
         }
     }
@@ -3377,7 +3104,6 @@ public partial class MainWindow : Window, IDisposable
         await ReloadActiveRecoveryStateAsync(
             rebindLegendsPath: false,
             CancellationToken.None).ConfigureAwait(true);
-        _playerStateRestorePending = _activeState is not null;
         RefreshDisplayAndPlan();
         return restoredCount;
     }
@@ -3395,7 +3121,8 @@ public partial class MainWindow : Window, IDisposable
                 return;
             }
 
-            ApplyPendingStateToControls();
+            RefreshDisplayAndPlan();
+            RefreshActionAvailability();
             SetRecoveryStatus();
         }
         catch (Exception exception) when (IsExpectedUserFacingFailure(exception))
@@ -3417,11 +3144,6 @@ public partial class MainWindow : Window, IDisposable
                 cancellationToken).ConfigureAwait(true);
         _activeRecoveryCount = activeStates.Count;
         _activeState = activeStates.Count > 0 ? activeStates[0] : null;
-        _playerStateRestorePending = _activeState is not null;
-        if (_playerStateRestorePending)
-        {
-            _nextPlayerStateRestoreAttemptUtc = DateTimeOffset.MinValue;
-        }
         if (rebindLegendsPath && _activeState is not null)
         {
             LegendsPathTextBox.Text = _activeState.EqDirectory;
@@ -3436,107 +3158,17 @@ public partial class MainWindow : Window, IDisposable
             return;
         }
 
-        string source = FormatPixels(_activeState.ResolutionPlan.SourceResolution);
-        string target = FormatPixels(_activeState.ResolutionPlan.TargetResolution);
-        bool prepared = _activeState.Status == FourKayJournalStatus.Prepared;
-        bool reusablePreparedState =
-            _activeRecoveryCount == 1
-            && prepared
-            && IsPreparedPlanCompatibleWithSpinUi();
         int recoveryCount = Math.Max(1, _activeRecoveryCount);
-        string selectedSize = _currentPlan is null
-            ? "your selected UI size"
-            : FormatUiPercent(_currentPlan.ActualUiScale);
         SetStatus(
-            reusablePreparedState ? StatusTone.Ready : StatusTone.Info,
-            reusablePreparedState
-                ? "SAVED PROFILE MATCHES · READY TO LAUNCH"
-                : "PLAYER PROFILE WILL RESTORE AUTOMATICALLY",
-            reusablePreparedState
-                ? $"The saved {source} → {target} setup exactly matches the selected "
-                    + "UI mode, display, scale, and filter. Launch will reuse it "
-                    + "directly."
-                : $"Keep adjusting the launcher normally. Launch will restore all "
-                    + $"{recoveryCount} saved player-profile "
-                    + (recoveryCount == 1 ? "snapshot" : "snapshots")
-                    + $" newest-first, then prepare {selectedSize}. Any session-era "
-                    + "player-state copies are preserved first; the verified "
-                    + "pre-session layout, hotbars, macros, keybinds, userdata, and "
-                    + "client settings are restored.");
-    }
-
-    private void ApplyPendingStateToControls()
-    {
-        bool pending = _activeState?.Status
-            is FourKayJournalStatus.Preparing or FourKayJournalStatus.Prepared;
-        if (!pending)
-        {
-            RefreshActionAvailability();
-            return;
-        }
-
-        FourKayPreparedState state = _activeState!;
-        DisplayChoice? choice = TargetDisplayComboBox.Items
-            .OfType<DisplayChoice>()
-            .FirstOrDefault(
-                item => item.Monitor.Handle.ToInt64() == state.TargetMonitorHandle);
-        if (choice is not null)
-        {
-            TargetDisplayComboBox.SelectedItem = choice;
-        }
-
-        _isUpdatingPresetCards = true;
-        try
-        {
-            bool preparedModeMatchesSelection =
-                state.UiCompatibilityMode == SelectedUiCompatibilityMode;
-            if (preparedModeMatchesSelection
-                && state.UiCompatibilityMode
-                    == FourKayUiCompatibilityMode.GenericOrCustom)
-            {
-                double scale = Math.Clamp(
-                    Math.Round(
-                        state.ResolutionPlan.ActualUiScale * 100.0,
-                        MidpointRounding.AwayFromZero) / 100.0,
-                    FineScaleSlider.Minimum,
-                    FineScaleSlider.Maximum);
-                FineScaleSlider.Value = scale;
-                SyncGenericPresetSelection(scale);
-            }
-
-            if (preparedModeMatchesSelection)
-            {
-                ScalingFilter journalFilter = state.ResolutionPlan.Filter;
-                if (state.UiCompatibilityMode
-                    == FourKayUiCompatibilityMode.GenericOrCustom)
-                {
-                    // A journal edited outside this app could pair 100% with a
-                    // non-clarity filter or a fractional scale with exact pixels;
-                    // the same policy that governs the live controls applies here.
-                    journalFilter = GenericUiScalePolicy.NormalizeFilter(
-                        FineUiScale.FromSlider(FineScaleSlider.Value),
-                        journalFilter);
-                }
-
-                QualityComboBox.SelectedIndex = journalFilter switch
-                {
-                    ScalingFilter.Lanczos => 1,
-                    ScalingFilter.NearestNeighbor => 2,
-                    _ => 0,
-                };
-                ChatTextComboBox.SelectedIndex = Math.Clamp(
-                    state.ChatFontSizeIncrease,
-                    0,
-                    ChatTextComboBox.Items.Count - 1);
-            }
-        }
-        finally
-        {
-            _isUpdatingPresetCards = false;
-        }
-
-        RefreshDisplayAndPlan();
-        RefreshActionAvailability();
+            StatusTone.Info,
+            "OLDER PROFILE BACKUP AVAILABLE",
+            $"{recoveryCount} saved player-profile "
+                + (recoveryCount == 1 ? "snapshot" : "snapshots")
+                + " from an older SpinFOURKAYYY version "
+                + (recoveryCount == 1 ? "was" : "were")
+                + " found. Nothing is restored automatically — your current "
+                + "in-game settings and layouts stay untouched. Use Restore now "
+                + "only if you want to roll back to that older backup.");
     }
 
     private string RequireValidLegendsDirectory()
@@ -3578,7 +3210,9 @@ public partial class MainWindow : Window, IDisposable
         _isScaledSessionActive = active;
         _scalingCleanupRequired = false;
         _scalingSupervisionState = ScalingSessionSupervisionState.Active;
-        AttachButton.Content = active ? "Stop fullscreen scaling" : "Attach to running game";
+        AttachButton.Content = active
+            ? "Stop fullscreen scaling"
+            : "Scale the running game";
         InputSafetyText.Foreground = active
             ? (Brush)FindResource("SuccessBrush")
             : (Brush)FindResource("WarningBrush");

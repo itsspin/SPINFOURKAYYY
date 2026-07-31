@@ -112,7 +112,7 @@
                                            FontSize="11"
                                            Foreground="{StaticResource MutedTextBrush}"
                                            TextWrapping="Wrap"
-                                           Text="Its verified player-profile snapshot will restore automatically after Legends closes. Any newer session copy is preserved first." />
+                                           Text="An older version saved this backup. Nothing restores automatically; your current in-game settings stay untouched unless you choose Restore now." />
                             </StackPanel>
                             <Button x:Name="RestoreButton"
                                     Grid.Column="2"
@@ -138,17 +138,17 @@
                                    FontFamily="Segoe UI Variable Display, Segoe UI"
                                    FontSize="27"
                                    FontWeight="Bold"
-                                   Text="Open it. Let the game get comfortable." />
+                                   Text="Scale the running game. Instantly." />
                         <TextBlock x:Name="ReadabilityDescriptionText"
                                    FontSize="13"
                                    Foreground="{StaticResource MutedTextBrush}"
                                    TextWrapping="Wrap"
-                                   Text="Choose Native clarity to keep the UI at 100%, or choose a larger size for easier UI and overhead-name reading." />
+                                   Text="Choose Native clarity to keep the UI at 100%, or choose a larger size for easier UI and overhead-name reading. Changes apply live." />
                         <TextBlock Margin="0,3,0,0"
                                    FontSize="11"
                                    Foreground="{StaticResource MutedTextBrush}"
                                    TextWrapping="Wrap"
-                                   Text="A real size change is applied at the next safe launch so Legends rebuilds its render surface correctly. Your current UI profile stays selected and is protected." />
+                                   Text="Nothing is written to eqclient.ini or any saved UI file — everything you change and save in game persists exactly as EverQuest saved it." />
                     </StackPanel>
 
                     <Border x:Name="FineScaleBorder"
@@ -436,28 +436,32 @@
                             <ColumnDefinition Width="10" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Button x:Name="PrepareLaunchButton"
+                        <Button x:Name="AttachButton"
                                 Grid.Column="0"
                                 MinHeight="52"
-                                AutomationProperties.HelpText="Backs up relevant settings, launches EverQuest Legends, and starts external readable scaling."
+                                AutomationProperties.Name="Scale the running game now"
+                                AutomationProperties.HelpText="Applies live scaling to the running EverQuest window without modifying any saved file."
                                 IsEnabled="False"
                                 Style="{StaticResource PrimaryButton}"
-                                Click="PrepareAndLaunch_Click"
-                                Content="Launch EverQuest with 125% UI" />
-                        <Button x:Name="AttachButton"
+                                Click="Attach_Click"
+                                Content="Scale the running game" />
+                        <Button x:Name="PrepareLaunchButton"
                                 Grid.Column="2"
                                 MinWidth="190"
                                 MinHeight="48"
+                                AutomationProperties.Name="Start EverQuest and scale automatically"
+                                AutomationProperties.HelpText="Starts the normal Legends launcher and applies live scaling when the game window appears."
+                                IsEnabled="False"
                                 Style="{StaticResource SecondaryButton}"
-                                Click="Attach_Click"
-                                Content="Restart required for real scaling" />
+                                Click="PrepareAndLaunch_Click"
+                                Content="Start EverQuest for me" />
                     </Grid>
 
                     <Expander x:Name="AdvancedExpander"
                               Margin="0,9,0,0"
                               IsExpanded="False"
                               AutomationProperties.Name="Advanced setup"
-                              AutomationProperties.HelpText="Shows game folder, display, optional SpinUI, quality, chat, and technical details."
+                              AutomationProperties.HelpText="Shows game folder, display, optional SpinUI, quality, clarity, and technical details."
                               Style="{StaticResource AdvancedExpanderStyle}">
                         <Expander.Header>
                             <StackPanel>
@@ -467,7 +471,7 @@
                                 <TextBlock Margin="0,1,0,0"
                                            FontSize="11"
                                            Foreground="{StaticResource MutedTextBrush}"
-                                           Text="Game folder, display, optional SpinUI, quality, and technical details" />
+                                           Text="Game folder, display, optional SpinUI, quality, clarity, and technical details" />
                             </StackPanel>
                         </Expander.Header>
                         <StackPanel Margin="0,9,0,0">
@@ -652,29 +656,35 @@
                                     </ComboBox>
                                 </StackPanel>
                                 <StackPanel Grid.Column="2">
-                                    <TextBlock x:Name="ChatTextLabel"
-                                               Margin="0,0,0,4"
-                                               FontSize="12"
-                                               FontWeight="SemiBold"
-                                               Text="Chat text" />
-                                    <ComboBox x:Name="ChatTextComboBox"
-                                              AutomationProperties.Name="Chat text adjustment"
-                                              SelectedIndex="0">
-                                        <ComboBoxItem Tag="Keep"
-                                                      IsSelected="True"
-                                                      Content="Keep current size" />
-                                        <ComboBoxItem Tag="OneStep"
-                                                      Content="Increase one step" />
-                                        <ComboBoxItem Tag="TwoSteps"
-                                                      Content="Increase two steps" />
-                                    </ComboBox>
-                                    <TextBlock x:Name="SpinUiChatHintText"
-                                               Margin="0,4,0,0"
-                                               Visibility="Collapsed"
+                                    <Grid Margin="0,0,0,4">
+                                        <TextBlock FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Text="Clarity strength" />
+                                        <TextBlock x:Name="ClarityValueText"
+                                                   HorizontalAlignment="Right"
+                                                   FontFamily="Cascadia Mono, Consolas"
+                                                   FontSize="12"
+                                                   FontWeight="Bold"
+                                                   Foreground="{StaticResource CyanBrush}"
+                                                   Text="110%" />
+                                    </Grid>
+                                    <Slider x:Name="ClaritySlider"
+                                            Minimum="0"
+                                            Maximum="200"
+                                            Value="110"
+                                            SmallChange="5"
+                                            LargeChange="25"
+                                            TickFrequency="5"
+                                            IsSnapToTickEnabled="True"
+                                            AutoToolTipPlacement="TopLeft"
+                                            AutomationProperties.Name="Clarity sharpening strength"
+                                            AutomationProperties.HelpText="Zero disables sharpening; values above one hundred percent add a second sharpening pass. Applies live to an active session."
+                                            ValueChanged="ClaritySlider_ValueChanged" />
+                                    <TextBlock Margin="0,4,0,0"
                                                FontSize="11"
                                                Foreground="{StaticResource MutedTextBrush}"
                                                TextWrapping="Wrap"
-                                               Text="SpinUI stores chat fonts per window. Right-click each chat window in game and choose Font." />
+                                               Text="Sharpens the whole visible frame. Above 100% adds a second sharpening pass; changes apply live." />
                                 </StackPanel>
                             </Grid>
 

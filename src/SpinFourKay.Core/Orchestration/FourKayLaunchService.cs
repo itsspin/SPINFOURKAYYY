@@ -23,7 +23,7 @@ public sealed record FourKayLaunchRequest
 
     public TimeSpan ScalingTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
-    public double RcasSharpness { get; init; } = 0.75;
+    public double RcasSharpness { get; init; } = 1.0;
 
     public double? MaximumFrameRate { get; init; }
 
@@ -69,7 +69,7 @@ public sealed record FourKayAttachRequest
 
     public TimeSpan ScalingTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
-    public double RcasSharpness { get; init; } = 0.75;
+    public double RcasSharpness { get; init; } = 1.0;
 
     public double? MaximumFrameRate { get; init; }
 
@@ -102,8 +102,6 @@ public sealed record FourKayLaunchResult(
 public sealed record FourKayLiveScaleRequest
 {
     public required FourKayLaunchResult ActiveLaunch { get; init; }
-
-    public required string EqClientIniPath { get; init; }
 
     public required ResolutionPlan RequestedPlan { get; init; }
 
@@ -513,18 +511,19 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
 
         string eqDirectory = Path.GetFullPath(request.EqDirectory);
         string eqGamePath = RequireFile(Path.Combine(eqDirectory, "eqgame.exe"));
-        string eqClientIniPath = RequireFile(
-            Path.Combine(eqDirectory, "eqclient.ini"));
-        string initialIniSnapshot = await CaptureVerifiedNativeUiScaleSnapshotAsync(
-            eqClientIniPath,
-            "Attach",
+        // Player configuration is strictly read-only for Attach. A non-native
+        // saved UI scale becomes an advisory warning instead of a hard stop, and
+        // eqclient.ini is never required, locked, or rewritten.
+        string? nativeUiScaleAdvisory = await ReadNativeUiScaleAdvisoryAsync(
+            Path.Combine(eqDirectory, "eqclient.ini"),
             cancellationToken).ConfigureAwait(false);
         IReadOnlyList<ProcessDescriptor> matches =
             _processDiscovery.FindByExecutablePath(eqGamePath);
         if (matches.Count == 0)
         {
             throw new InvalidOperationException(
-                "EverQuest Legends is not running; use Launch instead of Attach.");
+                "EverQuest Legends is not running. Start the game normally, then "
+                    + "scale the running window.");
         }
 
         if (matches.Count > 1)
@@ -610,22 +609,6 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                     eqGamePath,
                     requestedClientSize);
                 EnsureExactAttachProcess(exactProcess, eqGamePath);
-                string finalIniSnapshot =
-                    await CaptureVerifiedNativeUiScaleSnapshotAsync(
-                        eqClientIniPath,
-                        "Attach",
-                        cancellationToken).ConfigureAwait(false);
-                if (!string.Equals(
-                    initialIniSnapshot,
-                    finalIniSnapshot,
-                    StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidDataException(
-                        "eqclient.ini changed while Attach was validating the running "
-                            + "client. No fullscreen scaling was started; retry only "
-                            + "after the saved settings are stable at native UIScale=0.");
-                }
-
                 ScalingFilter effectiveFilter = request.Filter;
                 List<string> attachWarnings =
                     clientSizeChanged
@@ -641,6 +624,11 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                             "Attached without changing eqclient.ini. The game is using "
                                 + "its current window resolution.",
                         ];
+                if (nativeUiScaleAdvisory is not null)
+                {
+                    attachWarnings.Add(nativeUiScaleAdvisory);
+                }
+
                 if (effectiveFilter == ScalingFilter.NearestNeighbor
                     && !IsExactIntegerScale(
                         requestedClientSize,
@@ -670,23 +658,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                         request.ScalingTimeout,
                         attachedToExistingGame: true,
                         warnings: attachWarnings,
-                        finalConfigurationGuard: async token =>
-                        {
-                            string immediateSnapshot =
-                                await CaptureVerifiedNativeUiScaleSnapshotAsync(
-                                    eqClientIniPath,
-                                    "Attach",
-                                    token).ConfigureAwait(false);
-                            if (!string.Equals(
-                                initialIniSnapshot,
-                                immediateSnapshot,
-                                StringComparison.OrdinalIgnoreCase))
-                            {
-                                throw new InvalidDataException(
-                                    "eqclient.ini changed immediately before fullscreen "
-                                        + "scaling. Attach was stopped.");
-                            }
-                        },
+                        finalConfigurationGuard: _ => Task.CompletedTask,
                         attachWindowRecovery: attachWindowRecovery,
                         cancellationToken).ConfigureAwait(false);
                 processWrapperTransferred = true;
@@ -736,10 +708,6 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         PixelSize previousSize = launch.Placement.RequestedClientSize;
         PixelSize requestedSize = requestedPlan.SourceResolution;
         cancellationToken.ThrowIfCancellationRequested();
-        _ = await CaptureVerifiedNativeUiScaleSnapshotAsync(
-            request.EqClientIniPath,
-            "Live scale",
-            cancellationToken).ConfigureAwait(false);
         EnsureOriginalLiveMonitorAvailable(launch);
         _ = RequireExactLiveSourceWindow(
             launch,
@@ -853,10 +821,6 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                     expectedDestination,
                     request.WindowTimeout,
                     CancellationToken.None).ConfigureAwait(false);
-            _ = await CaptureVerifiedNativeUiScaleSnapshotAsync(
-                request.EqClientIniPath,
-                "Live scale",
-                CancellationToken.None).ConfigureAwait(false);
             updated = updated with
             {
                 ScalingInspection = output.Inspection,
@@ -878,7 +842,6 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
             LiveScaleRecovery recovered =
                 await RestorePreviousLiveScaleAsync(
                     launch,
-                    request.EqClientIniPath,
                     request.WindowTimeout).ConfigureAwait(false);
             return new FourKayLiveScaleResult(
                 FourKayLiveScaleDisposition.RecoveredPrevious,
@@ -1965,7 +1928,6 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
 
     private async Task<LiveScaleRecovery> RestorePreviousLiveScaleAsync(
         FourKayLaunchResult launch,
-        string eqClientIniPath,
         TimeSpan windowTimeout)
     {
         EnsureExactLiveProcesses(launch);
@@ -2052,10 +2014,6 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 recovered.ExpectedDestinationRegion,
                 windowTimeout,
                 CancellationToken.None).ConfigureAwait(false);
-        _ = await CaptureVerifiedNativeUiScaleSnapshotAsync(
-            eqClientIniPath,
-            "Live scale rollback",
-            CancellationToken.None).ConfigureAwait(false);
         recovered = recovered with
         {
             ScalingInspection = postcondition.Inspection,
@@ -2473,6 +2431,50 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         }
     }
 
+    /// <summary>
+    /// Read-only advisory check used by Attach and launch-then-attach. It never
+    /// blocks scaling and never writes: a missing, unreadable, or non-native
+    /// eqclient.ini simply produces a warning string (or none).
+    /// </summary>
+    private async Task<string?> ReadNativeUiScaleAdvisoryAsync(
+        string eqClientIniPath,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!File.Exists(eqClientIniPath))
+            {
+                return null;
+            }
+
+            EqClientVideoSettings settings = await _eqClientConfiguration.ReadAsync(
+                eqClientIniPath,
+                cancellationToken).ConfigureAwait(false);
+            if (settings.NativeUiScaleStatus == NativeUiScaleStatus.Valid
+                && settings.NativeUiScaleIndex is int nativeUiScaleIndex
+                && nativeUiScaleIndex != 0)
+            {
+                return
+                    "The saved Legends native UI scale is above 1x, so the in-game "
+                        + "UI scaling and this fullscreen scaling are stacked. "
+                        + "eqclient.ini was read only and was not modified.";
+            }
+
+            return null;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or NotSupportedException
+                or System.Security.SecurityException)
+        {
+            return
+                "eqclient.ini could not be read for the advisory native UI-scale "
+                    + "check. It was not modified. " + exception.Message;
+        }
+    }
+
     private async Task<string> CaptureVerifiedNativeUiScaleSnapshotAsync(
         string eqClientIniPath,
         string actionName,
@@ -2626,7 +2628,6 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.ActiveLaunch);
         ArgumentNullException.ThrowIfNull(request.RequestedPlan);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.EqClientIniPath);
         if (request.WindowTimeout <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(
@@ -2678,22 +2679,6 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         {
             throw new InvalidOperationException(
                 "The active session has no exact game executable path binding.");
-        }
-
-        string expectedIniPath = Path.GetFullPath(
-            Path.Combine(
-                Path.GetDirectoryName(launch.SourceWindow.ExecutablePath)
-                    ?? throw new InvalidOperationException(
-                        "The active game executable has no parent directory."),
-                "eqclient.ini"));
-        if (!string.Equals(
-                expectedIniPath,
-                Path.GetFullPath(request.EqClientIniPath),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidDataException(
-                "The live-scale INI path does not belong to the active exact game "
-                    + "executable directory.");
         }
     }
 

@@ -302,46 +302,66 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
 
     private static JsonObject CreateFsrMode(double rcasSharpness)
     {
+        JsonArray effects =
+        [
+            new JsonObject
+            {
+                ["name"] = @"FSR\FSR_EASU",
+                ["scalingType"] = 1,
+                ["scale"] = CreateScale(),
+            },
+        ];
+        AppendRcasSharpeningPasses(effects, rcasSharpness);
         return new JsonObject
         {
             ["name"] = SmoothModeName,
-            ["effects"] = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["name"] = @"FSR\FSR_EASU",
-                    ["scalingType"] = 1,
-                    ["scale"] = CreateScale(),
-                },
-                new JsonObject
-                {
-                    ["name"] = @"FSR\FSR_RCAS",
-                    ["parameters"] = new JsonObject
-                    {
-                        ["sharpness"] = rcasSharpness,
-                    },
-                },
-            },
+            ["effects"] = effects,
         };
     }
 
     private static JsonObject CreateNativeClarityMode(double rcasSharpness)
     {
+        JsonArray effects = [];
+        AppendRcasSharpeningPasses(effects, rcasSharpness);
         return new JsonObject
         {
             ["name"] = NativeClarityModeName,
-            ["effects"] = new JsonArray
+            ["effects"] = effects,
+        };
+    }
+
+    /// <summary>
+    /// Sharpness up to 1.0 is one RCAS pass. Above 1.0, the remainder becomes a
+    /// second RCAS pass so the clarity treatment is visibly stronger without any
+    /// single pass exceeding the shader's supported range.
+    /// </summary>
+    private static void AppendRcasSharpeningPasses(
+        JsonArray effects,
+        double rcasSharpness)
+    {
+        double firstPass = Math.Min(rcasSharpness, 1.0);
+        effects.Add(
+            new JsonObject
             {
+                ["name"] = @"FSR\FSR_RCAS",
+                ["parameters"] = new JsonObject
+                {
+                    ["sharpness"] = firstPass,
+                },
+            });
+        double secondPass = Math.Min(rcasSharpness - firstPass, 1.0);
+        if (secondPass > 0)
+        {
+            effects.Add(
                 new JsonObject
                 {
                     ["name"] = @"FSR\FSR_RCAS",
                     ["parameters"] = new JsonObject
                     {
-                        ["sharpness"] = rcasSharpness,
+                        ["sharpness"] = secondPass,
                     },
-                },
-            },
-        };
+                });
+        }
     }
 
     private static JsonObject CreateSingleEffectMode(string modeName, string effectName)
@@ -575,12 +595,13 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
 
         if (!double.IsFinite(request.RcasSharpness)
             || request.RcasSharpness < 0
-            || request.RcasSharpness > 1)
+            || request.RcasSharpness > 2)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(request),
                 request.RcasSharpness,
-                "RCAS sharpness must be between 0 and 1.");
+                "RCAS sharpness must be between 0 and 2; values above 1 add a "
+                    + "second sharpening pass.");
         }
 
         if (request.NativeClarityOnly
