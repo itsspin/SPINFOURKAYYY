@@ -62,7 +62,7 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         int lanczosIndex = UpsertNamedObject(
             scalingModes,
             LanczosModeName,
-            CreateSingleEffectMode(LanczosModeName, "Lanczos"));
+            CreateLanczosMode(request.RcasSharpness));
 
         int selectedMode = request.NativeClarityOnly
             ? nativeClarityIndex
@@ -311,7 +311,7 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
                 ["scale"] = CreateScale(),
             },
         ];
-        AppendRcasSharpeningPasses(effects, rcasSharpness);
+        AppendClarityPasses(effects, rcasSharpness);
         return new JsonObject
         {
             ["name"] = SmoothModeName,
@@ -322,7 +322,7 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
     private static JsonObject CreateNativeClarityMode(double rcasSharpness)
     {
         JsonArray effects = [];
-        AppendRcasSharpeningPasses(effects, rcasSharpness);
+        AppendClarityPasses(effects, rcasSharpness);
         return new JsonObject
         {
             ["name"] = NativeClarityModeName,
@@ -330,35 +330,60 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         };
     }
 
+    private static JsonObject CreateLanczosMode(double rcasSharpness)
+    {
+        JsonArray effects =
+        [
+            new JsonObject
+            {
+                ["name"] = "Lanczos",
+                ["scalingType"] = 1,
+                ["scale"] = CreateScale(),
+            },
+        ];
+        AppendClarityPasses(effects, rcasSharpness);
+        return new JsonObject
+        {
+            ["name"] = LanczosModeName,
+            ["effects"] = effects,
+        };
+    }
+
     /// <summary>
-    /// Sharpness up to 1.0 is one RCAS pass. Above 1.0, the remainder becomes a
-    /// second RCAS pass so the clarity treatment is visibly stronger without any
-    /// single pass exceeding the shader's supported range.
+    /// Clarity up to 1.0 is one RCAS pass, whose ringing limiter keeps text
+    /// edges clean. Above 1.0 the remainder drives a bundled AdaptiveSharpen
+    /// pass (its own overshoot compression avoids halos), which is visibly
+    /// stronger than stacking a second RCAS. Both effects and their parameter
+    /// names/ranges are pinned by the audited Magpie v0.12.1 effect sources.
     /// </summary>
-    private static void AppendRcasSharpeningPasses(
+    private static void AppendClarityPasses(
         JsonArray effects,
         double rcasSharpness)
     {
-        double firstPass = Math.Min(rcasSharpness, 1.0);
+        double rcasPass = Math.Min(rcasSharpness, 1.0);
         effects.Add(
             new JsonObject
             {
                 ["name"] = @"FSR\FSR_RCAS",
                 ["parameters"] = new JsonObject
                 {
-                    ["sharpness"] = firstPass,
+                    ["sharpness"] = rcasPass,
                 },
             });
-        double secondPass = Math.Min(rcasSharpness - firstPass, 1.0);
-        if (secondPass > 0)
+        double adaptiveBoost = rcasSharpness - rcasPass;
+        if (adaptiveBoost > 0)
         {
+            // AdaptiveSharpen's curveHeight range is 0-2 with 0.3-2.0 the
+            // documented reasonable band; the 0-1 boost maps to 0-1.2.
             effects.Add(
                 new JsonObject
                 {
-                    ["name"] = @"FSR\FSR_RCAS",
+                    ["name"] = @"Sharpen\AdaptiveSharpen",
                     ["parameters"] = new JsonObject
                     {
-                        ["sharpness"] = secondPass,
+                        ["curveHeight"] = Math.Round(
+                            Math.Min(adaptiveBoost * 1.2, 2.0),
+                            4),
                     },
                 });
         }

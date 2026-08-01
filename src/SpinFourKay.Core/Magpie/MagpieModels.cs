@@ -23,7 +23,7 @@ public sealed record MagpieProfileRequest
 
     /// <summary>
     /// Clarity strength from 0 to 2. Values up to 1 map to one RCAS pass;
-    /// values above 1 add a second RCAS pass with the remainder.
+    /// values above 1 layer a bundled AdaptiveSharpen pass with the remainder.
     /// </summary>
     public double RcasSharpness { get; init; } = 1.0;
 

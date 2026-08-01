@@ -49,17 +49,19 @@ A true native-resolution 3D world with independently larger UI/nameplates would 
 
 SpinFOURKAYYY resizes the running client **window** to the selected real source size, then scales that window to borderless fullscreen with the bundled Magpie engine. In windowed mode the client adapts its render surface to the window, so the resize takes effect immediately — the game does not need to be started from this app or restarted for a new size.
 
-Moving the size slider during an active session pauses the fullscreen output, resizes the exact same game window, and re-verifies the borderless output and mouse map — typically within a second or two. When scaling stops (or the app closes), the game window is returned to its exact previous size and position and the game keeps running normally.
+Moving the size slider during an active session stops the owned output, resizes the exact same game window, and immediately re-establishes borderless fullscreen itself — bringing the game back to the foreground and re-verifying the output and mouse map before reporting success. You never need to click back into the game to restore fullscreen after an adjustment. When scaling stops (or the app closes), the game window is returned to its exact previous size and position and the game keeps running normally.
 
 ## Adjustable clarity
 
-The **Clarity strength** slider (0–200%, default 110%) controls the RCAS sharpening applied to the visible frame in every mode:
+The **Clarity strength** slider (0–200%, default 110%) controls the sharpening chain applied to the visible frame in every mode, including Lanczos:
 
 - **0%** disables sharpening entirely.
 - **1–100%** maps to one RCAS pass of increasing strength.
-- **101–200%** adds a second RCAS pass carrying the remainder, for a visibly stronger clarity treatment than any single pass can produce.
+- **101–200%** layers Magpie’s bundled AdaptiveSharpen pass on top with increasing strength. Its adaptive curve and overshoot compression add visible punch to the whole frame without the halo artifacts of simply stacking a second plain sharpener.
 
 Clarity changes apply to a live session automatically: the engine restarts its fullscreen output with the new strength in a few seconds, without touching the game.
+
+Sharpening operates on the rendered frame, so it makes existing detail — including already-visible overhead names — crisper; it cannot re-render text the game drew tiny or did not draw at all. For genuinely larger, easier-to-read names and UI at a distance, use the size slider above 100%: the whole frame, names included, is enlarged.
 
 ## Fullscreen, Alt+Tab, and mouse behavior
 

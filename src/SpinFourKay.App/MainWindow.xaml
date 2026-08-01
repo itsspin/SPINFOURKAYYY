@@ -678,13 +678,13 @@
                                             IsSnapToTickEnabled="True"
                                             AutoToolTipPlacement="TopLeft"
                                             AutomationProperties.Name="Clarity sharpening strength"
-                                            AutomationProperties.HelpText="Zero disables sharpening; values above one hundred percent add a second sharpening pass. Applies live to an active session."
+                                            AutomationProperties.HelpText="Zero disables sharpening; values above one hundred percent layer an adaptive second sharpening pass. Applies live to an active session."
                                             ValueChanged="ClaritySlider_ValueChanged" />
                                     <TextBlock Margin="0,4,0,0"
                                                FontSize="11"
                                                Foreground="{StaticResource MutedTextBrush}"
                                                TextWrapping="Wrap"
-                                               Text="Sharpens the whole visible frame. Above 100% adds a second sharpening pass; changes apply live." />
+                                               Text="Sharpens the whole visible frame. Above 100% layers an adaptive second pass; changes apply live." />
                                 </StackPanel>
                             </Grid>
 

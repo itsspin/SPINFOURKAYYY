@@ -1480,8 +1480,9 @@ internal static class Program
                     NativeClarityOnly = true,
                 })).ConfigureAwait(false);
 
-        // Clarity strength above 1.0 adds a second RCAS pass carrying the
-        // remainder, for both the smooth FSR and native-clarity modes.
+        // Clarity strength above 1.0 layers a bundled AdaptiveSharpen pass on
+        // top of the ringing-limited RCAS pass, for the smooth FSR, Lanczos,
+        // and native-clarity modes alike.
         MagpiePortableConfigResult boosted = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.Fsr) with
             {
@@ -1507,13 +1508,13 @@ internal static class Program
                 .GetProperty("sharpness")
                 .GetDouble());
         Assert.Equal(
-            @"FSR\FSR_RCAS",
+            @"Sharpen\AdaptiveSharpen",
             boostedFsrEffects[2].GetProperty("name").GetString());
         Assert.NearlyEqual(
-            0.5,
+            0.6,
             boostedFsrEffects[2]
                 .GetProperty("parameters")
-                .GetProperty("sharpness")
+                .GetProperty("curveHeight")
                 .GetDouble());
         JsonElement boostedClarity = FindNamed(
             boostedModes,
@@ -1521,6 +1522,21 @@ internal static class Program
         Assert.Equal(
             2,
             boostedClarity.GetProperty("effects").GetArrayLength());
+        JsonElement boostedLanczos = FindNamed(
+            boostedModes,
+            MagpiePortableConfigService.LanczosModeName);
+        JsonElement boostedLanczosEffects =
+            boostedLanczos.GetProperty("effects");
+        Assert.Equal(3, boostedLanczosEffects.GetArrayLength());
+        Assert.Equal(
+            "Lanczos",
+            boostedLanczosEffects[0].GetProperty("name").GetString());
+        Assert.Equal(
+            @"FSR\FSR_RCAS",
+            boostedLanczosEffects[1].GetProperty("name").GetString());
+        Assert.Equal(
+            @"Sharpen\AdaptiveSharpen",
+            boostedLanczosEffects[2].GetProperty("name").GetString());
     }
 
     private static async Task MagpieConfigTransactionRollbackAsync()

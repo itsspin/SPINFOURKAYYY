@@ -633,8 +633,7 @@ public partial class MainWindow : Window, IDisposable
             || _isCloseCleanupRunning
             || _activeLaunch is not { } launch
             || launch.UiCompatibilityMode
-                != FourKayUiCompatibilityMode.GenericOrCustom
-            || launch.EffectiveFilter == ScalingFilter.NearestNeighbor)
+                != FourKayUiCompatibilityMode.GenericOrCustom)
         {
             return;
         }
@@ -667,7 +666,7 @@ public partial class MainWindow : Window, IDisposable
             || !_isScaledSessionActive
             || _scalingCleanupRequired
             || _isCloseCleanupRunning
-            || _activeLaunch is not { } expectedLaunch)
+            || _activeLaunch is null)
         {
             _pendingLiveScale = null;
             return;
@@ -682,13 +681,10 @@ public partial class MainWindow : Window, IDisposable
         _pendingLiveScale = null;
         await RunOperationAsync(
             "APPLYING LIVE SCALE",
-            $"Resizing the exact Legends render window for "
-                + $"{FormatUiPercent(requestedScale.Factor)}…",
-            token => AdjustLiveScaleCoreAsync(
-                requestedScale,
-                expectedLaunch,
-                token))
-            .ConfigureAwait(true);
+            $"Re-scaling the running game to "
+                + $"{FormatUiPercent(requestedScale.Factor)} and restoring "
+                + "borderless fullscreen…",
+            ReattachActiveSessionCoreAsync).ConfigureAwait(true);
     }
 
     private void ClaritySlider_ValueChanged(
@@ -746,15 +742,19 @@ public partial class MainWindow : Window, IDisposable
             "APPLYING CLARITY STRENGTH",
             $"Restarting the fullscreen output at "
                 + $"{Math.Round(ClaritySlider.Value):0}% clarity…",
-            ReapplyClarityCoreAsync).ConfigureAwait(true);
+            ReattachActiveSessionCoreAsync).ConfigureAwait(true);
     }
 
     /// <summary>
-    /// The engine reads its sharpening strength at startup, so a live clarity
-    /// change stops the exact owned output and immediately re-attaches at the
-    /// same size with the new strength. No game restart, no INI write.
+    /// Live size and clarity changes both use one deterministic path: stop the
+    /// exact owned output, then immediately re-attach with the current slider
+    /// values. Attach resizes the window, hands the game the foreground, and
+    /// verifies borderless fullscreen plus the mouse map before reporting
+    /// success, so an adjustment can never strand the game as a small window
+    /// waiting for a focus change. No game restart, no INI write.
     /// </summary>
-    private async Task ReapplyClarityCoreAsync(CancellationToken cancellationToken)
+    private async Task ReattachActiveSessionCoreAsync(
+        CancellationToken cancellationToken)
     {
         if (!_isScaledSessionActive
             || _scalingCleanupRequired
@@ -2330,9 +2330,7 @@ public partial class MainWindow : Window, IDisposable
             && (!_isScaledSessionActive
                 || (_activeLaunch is { } sliderLaunch
                     && sliderLaunch.UiCompatibilityMode
-                        == FourKayUiCompatibilityMode.GenericOrCustom
-                    && sliderLaunch.EffectiveFilter
-                        != ScalingFilter.NearestNeighbor));
+                        == FourKayUiCompatibilityMode.GenericOrCustom));
         FineScaleSlider.IsEnabled = liveSliderAvailable;
         FineScaleMinusButton.IsEnabled = FineScaleSlider.IsEnabled;
         FineScalePlusButton.IsEnabled = FineScaleSlider.IsEnabled;
@@ -2747,172 +2745,6 @@ public partial class MainWindow : Window, IDisposable
                 + $"{FormatPixels(attachedTarget)} at {attachedScale:0.##}x. "
                 + "The physical mouse map passed validation.",
             result.Warnings);
-    }
-
-    private async Task AdjustLiveScaleCoreAsync(
-        FineUiScale requestedScale,
-        FourKayLaunchResult expectedLaunch,
-        CancellationToken cancellationToken)
-    {
-        if (!_isScaledSessionActive
-            || _scalingCleanupRequired
-            || !ReferenceEquals(_activeLaunch, expectedLaunch))
-        {
-            return;
-        }
-
-        FourKayLaunchResult launch = expectedLaunch;
-        if (launch.UiCompatibilityMode
-                != FourKayUiCompatibilityMode.GenericOrCustom
-            || launch.EffectiveFilter == ScalingFilter.NearestNeighbor)
-        {
-            throw new InvalidOperationException(
-                "Live 1% adjustment requires a generic/custom UI session using "
-                    + "Adaptive FSR or Lanczos.");
-        }
-
-        nint foreground = _foregroundWindow.GetForegroundWindowHandle();
-        if (foreground == launch.SourceWindow.Handle)
-        {
-            throw new InvalidOperationException(
-                "Alt-Tab to SpinFOURKAYYY before adjusting the live scale.");
-        }
-
-        ResolutionPlan requestedPlan = _resolutionPlanner.CreateCustomPlan(
-            launch.Placement.Monitor.Bounds.Size,
-            requestedScale.Factor,
-            launch.EffectiveFilter);
-        if (requestedPlan.SourceResolution
-            == launch.Placement.RequestedClientSize)
-        {
-            RefreshDisplayAndPlan();
-            SetStatus(
-                StatusTone.Ready,
-                "LIVE SCALE ALREADY ACTIVE",
-                $"{FormatUiPercent(requestedScale.Factor)} resolves to the current "
-                    + $"{FormatPixels(requestedPlan.SourceResolution)} render surface, "
-                    + "so the game window and mouse map were left untouched.");
-            return;
-        }
-
-        FourKayLiveScaleResult result;
-        try
-        {
-            result = await _launchService.AdjustLiveScaleAsync(
-                new FourKayLiveScaleRequest
-                {
-                    ActiveLaunch = launch,
-                    RequestedPlan = requestedPlan,
-                    WindowTimeout = TimeSpan.FromSeconds(10),
-                },
-                cancellationToken).ConfigureAwait(true);
-        }
-        catch (FourKayLiveScaleAdjustmentException exception)
-        {
-            _scalingCleanupRequired = true;
-            ScalingCleanupResult cleanup = await StopAndConfirmOwnedScalingAsync(
-                TimeSpan.FromSeconds(10),
-                CancellationToken.None).ConfigureAwait(true);
-            if (cleanup.Success)
-            {
-                CompleteScalingOwnership(
-                    "Live scaling could not restore its previous verified geometry, "
-                        + "so the exact owned fullscreen engine was stopped safely.");
-            }
-
-            throw new InvalidOperationException(
-                exception.Message
-                    + (cleanup.Success
-                        ? " The exact owned session is stopped; the game remains in "
-                            + "its ordinary window."
-                        : " Exact cleanup also needs attention: " + cleanup.Message),
-                exception);
-        }
-        catch (Exception exception) when (IsExpectedUserFacingFailure(exception))
-        {
-            if (ReferenceEquals(_activeLaunch, launch))
-            {
-                SyncFineScaleToActiveLaunch(launch);
-                RefreshDisplayAndPlan();
-            }
-
-            throw;
-        }
-
-        if (!ReferenceEquals(_activeLaunch, launch))
-        {
-            throw new InvalidOperationException(
-                "The active scaling session changed while live adjustment was running.");
-        }
-
-        _activeLaunch = result.ActiveLaunch;
-        _scalingSupervisionState = result.OutputIsActive
-            ? ScalingSessionSupervisionState.Active
-            : ScalingSessionSupervisionState.Suspended;
-        if (result.Disposition == FourKayLiveScaleDisposition.RecoveredPrevious)
-        {
-            SyncFineScaleToActiveLaunch(result.ActiveLaunch);
-        }
-
-        RefreshDisplayAndPlan();
-        InputSafetyText.Foreground = (Brush)FindResource(
-            result.OutputIsActive ? "SuccessBrush" : "WarningBrush");
-        InputSafetyText.Text = result.OutputIsActive
-            ? "✓ Live size and physical mouse map verified"
-            : "○ Live size verified; mouse map will be reverified on return";
-        if (result.Disposition == FourKayLiveScaleDisposition.Committed)
-        {
-            SetStatus(
-                StatusTone.Ready,
-                result.OutputIsActive
-                    ? "LIVE SCALE ACTIVE · INPUT VERIFIED"
-                    : "LIVE SCALE READY · RETURN TO EVERQUEST",
-                $"{FormatUiPercent(requestedScale.Factor)} uses a "
-                    + $"{FormatPixels(requestedPlan.SourceResolution)} render surface. "
-                    + (result.OutputIsActive
-                        ? "Borderless fullscreen and every click are already verified. "
-                        : "Switch back to EverQuest to restore borderless fullscreen "
-                            + "and reverify every click. ")
-                    + "Larger UI means slightly less 3D detail.");
-        }
-        else
-        {
-            SetStatus(
-                StatusTone.Warning,
-                result.OutputIsActive
-                    ? "PREVIOUS LIVE SCALE RESTORED · INPUT VERIFIED"
-                    : "PREVIOUS LIVE SCALE RESTORED",
-                result.Message
-                    + (result.OutputIsActive
-                        ? " The restored fullscreen mouse map is verified."
-                        : " Return to EverQuest to reverify fullscreen."));
-        }
-    }
-
-    private static double CalculateActiveUiScale(FourKayLaunchResult launch)
-    {
-        PixelSize source = launch.Placement.RequestedClientSize;
-        PixelRect destination = launch.ExpectedDestinationRegion;
-        return Math.Min(
-            (double)destination.Width / source.Width,
-            (double)destination.Height / source.Height);
-    }
-
-    private void SyncFineScaleToActiveLaunch(FourKayLaunchResult launch)
-    {
-        double scale = CalculateActiveUiScale(launch);
-        _isUpdatingPresetCards = true;
-        try
-        {
-            FineScaleSlider.Value = Math.Clamp(
-                Math.Round(scale * 100.0, MidpointRounding.AwayFromZero) / 100.0,
-                FineScaleSlider.Minimum,
-                FineScaleSlider.Maximum);
-        }
-        finally
-        {
-            _isUpdatingPresetCards = false;
-        }
     }
 
     private async Task StopScalingCoreAsync(CancellationToken cancellationToken)
