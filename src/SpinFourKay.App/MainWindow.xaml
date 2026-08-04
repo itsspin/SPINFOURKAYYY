@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="SpinFOURKAYYY — Readable EverQuest at any resolution"
+        Icon="Assets/SpinFOURKAYYY.ico"
         Width="940"
         Height="720"
         MinWidth="820"
@@ -138,17 +139,17 @@
                                    FontFamily="Segoe UI Variable Display, Segoe UI"
                                    FontSize="27"
                                    FontWeight="Bold"
-                                   Text="Scale the running game. Instantly." />
+                                   Text="Choose a size. Launch. Play." />
                         <TextBlock x:Name="ReadabilityDescriptionText"
                                    FontSize="13"
                                    Foreground="{StaticResource MutedTextBrush}"
                                    TextWrapping="Wrap"
-                                   Text="Choose Native clarity to keep the UI at 100%, or choose a larger size for easier UI and overhead-name reading. Changes apply live." />
+                                   Text="Choose Native clarity to keep the UI at 100%, or a larger size for easier UI and overhead-name reading. SpinFOURKAYYY fits each player's own layout automatically before launch." />
                         <TextBlock Margin="0,3,0,0"
                                    FontSize="11"
                                    Foreground="{StaticResource MutedTextBrush}"
                                    TextWrapping="Wrap"
-                                   Text="Nothing is written to eqclient.ini or any saved UI file — everything you change and save in game persists exactly as EverQuest saved it." />
+                                   Text="Above 100%, verified scale-specific UI layout copies are used for the session, then changes are saved and native geometry is restored after EverQuest exits. Character macros, hotbuttons, socials, spell sets, keybinds, and userdata are never touched." />
                     </StackPanel>
 
                     <Border x:Name="FineScaleBorder"
@@ -440,7 +441,7 @@
                                 Grid.Column="0"
                                 MinHeight="52"
                                 AutomationProperties.Name="Scale the running game now"
-                                AutomationProperties.HelpText="Applies live scaling to the running EverQuest window without modifying any saved file."
+                                AutomationProperties.HelpText="Applies Native clarity to a running game, or stops the active fullscreen scaling session."
                                 IsEnabled="False"
                                 Style="{StaticResource PrimaryButton}"
                                 Click="Attach_Click"
@@ -450,7 +451,7 @@
                                 MinWidth="190"
                                 MinHeight="48"
                                 AutomationProperties.Name="Start EverQuest and scale automatically"
-                                AutomationProperties.HelpText="Starts the normal Legends launcher and applies live scaling when the game window appears."
+                                AutomationProperties.HelpText="Fits personal UI layouts for the selected percentage, starts the normal Legends launcher, and applies fullscreen scaling automatically."
                                 IsEnabled="False"
                                 Style="{StaticResource SecondaryButton}"
                                 Click="PrepareAndLaunch_Click"

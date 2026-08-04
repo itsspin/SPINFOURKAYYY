@@ -6,9 +6,10 @@
     <AssemblyName>SpinFOURKAYYY</AssemblyName>
     <RootNamespace>SpinFourKay.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.0.1</Version>
-    <FileVersion>1.0.1.0</FileVersion>
-    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <ApplicationIcon>Assets\SpinFOURKAYYY.ico</ApplicationIcon>
+    <Version>1.0.2</Version>
+    <FileVersion>1.0.2.0</FileVersion>
+    <AssemblyVersion>1.0.2.0</AssemblyVersion>
     <Product>SpinFOURKAYYY</Product>
     <Description>A reversible 4K readability companion for EverQuest Legends.</Description>
     <Authors>SpinFOURKAYYY contributors</Authors>
@@ -16,5 +17,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SpinFourKay.Core\SpinFourKay.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\SpinFOURKAYYY.ico" />
   </ItemGroup>
 </Project>

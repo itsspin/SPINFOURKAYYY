@@ -1,32 +1,33 @@
 # SpinFOURKAYYY
 
-SpinFOURKAYYY is a live 4K-readability companion for EverQuest Legends on Windows. It scales the running game instantly — no relaunch and no configuration edits. It can keep the UI at native 100% while applying an adjustable clarity pass, or resize the running client window to a lower real render size and scale the complete frame for larger UI and overhead names.
+SpinFOURKAYYY is a 4K-readability companion for EverQuest Legends on Windows. It can keep the UI at native 100% while applying an adjustable clarity pass, or render at a lower real resolution and scale the complete frame for larger UI and overhead names.
 
-It never writes to `eqclient.ini` or any other saved player file. It also does not replace EverQuest assets, inject code, alter network traffic, install a display driver, or force Windows desktop scaling to 100%.
+For sizes above 100%, SpinFOURKAYYY automatically fits every player's own `UI_<character>_<server>...ini` layout to the chosen render size before the normal launcher opens. It works with default, custom, and character-specific UI layouts—no bundled layout or hardcoded character name is required. It does not replace EverQuest assets, inject code, alter network traffic, install a display driver, or force Windows desktop scaling to 100%.
 
 ## Quick start
 
 1. Extract the complete SpinFOURKAYYY release into a normal user-writable folder.
-2. Start EverQuest Legends normally (any launcher, any saved settings) and leave it in windowed mode.
-3. Run `SpinFOURKAYYY.exe`. If exactly one Legends client is running, live scaling attaches automatically.
-4. Choose:
+2. Run `SpinFOURKAYYY.exe` and choose:
    - **Native clarity (100%)** for the same UI size with a crisper visible world and overhead-name text; or
    - any value from **101% to 200%** for larger UI and larger visible overhead names.
-5. Move the slider at any time — the running game follows within a moment. **Clarity strength** adjusts live the same way.
+3. Click **Start EverQuest for me**. The normal Legends launcher opens; patch and sign in normally.
+4. Keep SpinFOURKAYYY open while playing. When EverQuest exits, the app saves layout changes for that percentage and returns the live layout files to native geometry automatically.
 
-Order does not matter: you can also open SpinFOURKAYYY first and click **Start EverQuest for me**, which opens the normal launcher and attaches live scaling automatically when the game window appears. Nothing is prepared, backed up, or rewritten either way.
+At 100%, SpinFOURKAYYY can also attach to an already-running client because no layout conversion is needed. Sizes above 100% must be chosen before launch so the correct personal layout profile is present on the first frame. **Clarity strength** can still be adjusted while playing.
 
 No character-profile selection is required. **Current/default/custom UI** remains selected unless the user explicitly chooses the optional strict SpinUI workflow.
 
-## Your saved settings always persist
+## Personal layouts and saved settings
 
-SpinFOURKAYYY treats the entire EverQuest directory as read-only:
+The automatic layout transaction is deliberately narrow and recoverable:
 
-- `eqclient.ini` is never written, prepared, locked, or restored. At most it is read once, to warn when in-game native UI scaling is stacked on top of fullscreen scaling — and even then scaling proceeds.
-- UI layouts, hotbars, socials, spell sets, keybinds, and userdata are never backed up, swapped, or rolled back by the scaling flow. Whatever you change and save in game is exactly what the game loads next time.
-- The only thing SpinFOURKAYYY changes is the size and position of the running game **window**, and it restores the exact previous window geometry when scaling stops.
+- Only top-level character layout files whose names match EverQuest's `UI_*.ini` convention are converted. Generic `Width` and `Height` geometry is scaled; percent-based anchors, UI skin names, chat settings, unknown sections, line endings, and legacy bytes are preserved.
+- Character settings files are never opened by this flow. Macros, hotbuttons, socials, spell sets, keybinds, userdata, and UI asset folders remain untouched.
+- The minimum `eqclient.ini` video keys needed to launch at the selected source size are changed temporarily. Their original values are journaled before the write and restored after EverQuest exits, while unrelated settings saved during play are preserved.
+- Verified native snapshots and scale-specific profiles live under `%LOCALAPPDATA%\SpinFOURKAYYY\layout-profiles`, not in the game folder. An interrupted prepare rolls back exactly; an interrupted exit restore resumes safely the next time the app opens.
+- If a layout changed during play, its scaled version is saved for that percentage and an inverse-converted native version becomes the normal live file. If it did not change, the exact original bytes are restored.
 
-If an older SpinFOURKAYYY version left a pre-session profile backup on this machine, the app shows a notice and leaves your current files untouched. **Restore profile** is strictly manual, requires the game to be closed, and preserves your current files in a recovery copy before rolling anything back.
+SpinFOURKAYYY stays open until EverQuest exits so this capture-and-restore step cannot be skipped accidentally. If the app or Windows is interrupted, reopen SpinFOURKAYYY to resume recovery. Older pre-session backups from earlier versions remain separate: **Restore profile** is still manual and never runs as part of the new layout flow.
 
 ## Native clarity versus larger UI
 
@@ -45,11 +46,11 @@ The slider covers every exact 1% step from 100% through 200%. Values above 100% 
 
 A true native-resolution 3D world with independently larger UI/nameplates would require client-native fractional scaling or a separately maintained UI/XML/font implementation. An external whole-frame scaler cannot honestly provide that split.
 
-## How live scaling works
+## How scaling works
 
-SpinFOURKAYYY resizes the running client **window** to the selected real source size, then scales that window to borderless fullscreen with the bundled Magpie engine. In windowed mode the client adapts its render surface to the window, so the resize takes effect immediately — the game does not need to be started from this app or restarted for a new size.
+Before an above-100% session, SpinFOURKAYYY selects or creates a verified layout profile for the exact native-to-source resolution pair and temporarily prepares the game's windowed launch size. It then opens the normal launcher, binds to the exact resulting EverQuest process and window, and scales that source window to borderless fullscreen with the bundled Magpie engine.
 
-Moving the size slider during an active session pauses the fullscreen output, resizes the exact same game window, and re-verifies the borderless output and mouse map — typically within a second or two. When scaling stops (or the app closes), the game window is returned to its exact previous size and position and the game keeps running normally.
+The percentage selector is locked for the active session because a different source size needs a matching layout profile. Exit EverQuest, choose another percentage, and launch again; the new profile is generated automatically. When scaling stops, the exact previous window geometry is restored. When the game exits, layout changes are captured and the native layout transaction is completed.
 
 ## Adjustable clarity
 
@@ -88,11 +89,11 @@ The shaders run on the GPU and work with AMD, NVIDIA, and compatible Intel adapt
 
 ## Download and verify
 
-SpinFOURKAYYY 1.0.1 is an unsigned prototype distributed as a ZIP plus a neighboring `.zip.sha256` file.
+SpinFOURKAYYY 1.0.2 is an unsigned prototype distributed as a ZIP plus a neighboring `.zip.sha256` file.
 
 ```powershell
-(Get-FileHash -Algorithm SHA256 .\SpinFOURKAYYY-1.0.1-win-x64.zip).Hash
-Get-Content .\SpinFOURKAYYY-1.0.1-win-x64.zip.sha256
+(Get-FileHash -Algorithm SHA256 .\SpinFOURKAYYY-1.0.2-win-x64.zip).Hash
+Get-Content .\SpinFOURKAYYY-1.0.2-win-x64.zip.sha256
 ```
 
 The hexadecimal values must match. Extract the ZIP completely and run the executable from the extracted folder, not from inside the archive, `Program Files`, the EverQuest directory, or an elevated administrator session.
@@ -121,7 +122,7 @@ Requirements:
 Run:
 
 ```powershell
-.\build.ps1 -Version 1.0.1
+.\build.ps1 -Version 1.0.2
 ```
 
 The first build downloads the official pinned Magpie v0.12.1 release, verifies its SHA-256 before use, and checks out its exact audited source commit. The build then restores dependencies, compiles with warnings treated as errors, runs the deterministic self-test suite, publishes a self-contained single-file executable, verifies licenses, stages corresponding source, and creates the release ZIP plus SHA-256 sidecar under `artifacts`.
