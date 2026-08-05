@@ -29,10 +29,11 @@ public sealed record MagpieProfileRequest
     public ScalingFilter Filter { get; init; } = ScalingFilter.Fsr;
 
     /// <summary>
-    /// Clarity strength from 0 to 2. Values up to 1 map to one RCAS pass;
-    /// values above 1 add a second RCAS pass with the remainder.
+    /// Clarity strength from 0 to 1, mapped to one bounded RCAS pass. Multiple
+    /// sharpening passes are intentionally avoided because they amplify texture
+    /// noise and make bitmap UI artwork look grainy.
     /// </summary>
-    public double RcasSharpness { get; init; } = 1.0;
+    public double RcasSharpness { get; init; } = 0.65;
 
     /// <summary>
     /// Optional whole-frame post-process edge smoothing. This is applied after

@@ -320,7 +320,7 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
             },
         ];
         AppendAntiAliasingEffect(effects, antiAliasing);
-        AppendRcasSharpeningPasses(effects, rcasSharpness);
+        AppendRcasSharpeningPass(effects, rcasSharpness);
         return new JsonObject
         {
             ["name"] = SmoothModeName,
@@ -334,7 +334,7 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
     {
         JsonArray effects = [];
         AppendAntiAliasingEffect(effects, antiAliasing);
-        AppendRcasSharpeningPasses(effects, rcasSharpness);
+        AppendRcasSharpeningPass(effects, rcasSharpness);
         return new JsonObject
         {
             ["name"] = NativeClarityModeName,
@@ -362,38 +362,19 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         }
     }
 
-    /// <summary>
-    /// Sharpness up to 1.0 is one RCAS pass. Above 1.0, the remainder becomes a
-    /// second RCAS pass so the clarity treatment is visibly stronger without any
-    /// single pass exceeding the shader's supported range.
-    /// </summary>
-    private static void AppendRcasSharpeningPasses(
+    private static void AppendRcasSharpeningPass(
         JsonArray effects,
         double rcasSharpness)
     {
-        double firstPass = Math.Min(rcasSharpness, 1.0);
         effects.Add(
             new JsonObject
             {
                 ["name"] = @"FSR\FSR_RCAS",
                 ["parameters"] = new JsonObject
                 {
-                    ["sharpness"] = firstPass,
+                    ["sharpness"] = rcasSharpness,
                 },
             });
-        double secondPass = Math.Min(rcasSharpness - firstPass, 1.0);
-        if (secondPass > 0)
-        {
-            effects.Add(
-                new JsonObject
-                {
-                    ["name"] = @"FSR\FSR_RCAS",
-                    ["parameters"] = new JsonObject
-                    {
-                        ["sharpness"] = secondPass,
-                    },
-                });
-        }
     }
 
     private static JsonObject CreateSingleEffectMode(
@@ -632,13 +613,13 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
 
         if (!double.IsFinite(request.RcasSharpness)
             || request.RcasSharpness < 0
-            || request.RcasSharpness > 2)
+            || request.RcasSharpness > 1)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(request),
                 request.RcasSharpness,
-                "RCAS sharpness must be between 0 and 2; values above 1 add a "
-                    + "second sharpening pass.");
+                "RCAS sharpness must be between 0 and 1 so one quality-safe "
+                    + "sharpening pass is used.");
         }
 
         if (!Enum.IsDefined(request.AntiAliasing))

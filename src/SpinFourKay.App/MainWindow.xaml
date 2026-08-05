@@ -667,25 +667,25 @@
                                                    FontSize="12"
                                                    FontWeight="Bold"
                                                    Foreground="{StaticResource CyanBrush}"
-                                                   Text="110%" />
+                                                   Text="65%" />
                                     </Grid>
                                     <Slider x:Name="ClaritySlider"
                                             Minimum="0"
-                                            Maximum="200"
-                                            Value="110"
+                                            Maximum="100"
+                                            Value="65"
                                             SmallChange="5"
                                             LargeChange="25"
                                             TickFrequency="5"
                                             IsSnapToTickEnabled="True"
                                             AutoToolTipPlacement="TopLeft"
                                             AutomationProperties.Name="Clarity sharpening strength"
-                                            AutomationProperties.HelpText="Zero disables sharpening; values above one hundred percent add a second sharpening pass. Choose before launching EverQuest."
+                                            AutomationProperties.HelpText="Zero disables sharpening. Sixty-five percent is the balanced default; very high values can expose texture noise. Choose before launching EverQuest."
                                             ValueChanged="ClaritySlider_ValueChanged" />
                                     <TextBlock Margin="0,4,0,0"
                                                FontSize="11"
                                                Foreground="{StaticResource MutedTextBrush}"
                                                TextWrapping="Wrap"
-                                               Text="Sharpens the whole visible frame. Above 100% adds a second sharpening pass; choose before launch." />
+                                               Text="One quality-safe pass. 65% is balanced; lower it for smoother UI artwork or use Off anti-aliasing for the sharpest small text." />
                                 </StackPanel>
                             </Grid>
 

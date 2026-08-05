@@ -2247,14 +2247,14 @@ public partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Maps the clarity slider (0–200%) to the engine's RCAS strength (0–2).
-    /// Values above 100% add a second sharpening pass.
+    /// Maps the clarity slider (0-100%) to one bounded RCAS pass. A second pass
+    /// is deliberately unavailable because it amplifies source texture noise.
     /// </summary>
     private double SelectedClaritySharpness() =>
         Math.Clamp(
             Math.Round(ClaritySlider.Value) / 100.0,
             0.0,
-            2.0);
+            1.0);
 
     private string? NormalizeFilterForPreset()
     {

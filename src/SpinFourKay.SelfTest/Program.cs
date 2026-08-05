@@ -85,6 +85,9 @@ internal static class Program
         runner.Add("Magpie / portable JSON schema and exact profile", MagpiePortableJsonSchemaAsync);
         runner.Add("Magpie / profile upsert and every filter", MagpieProfileUpsertAndFiltersAsync);
         runner.Add(
+            "Magpie / stable versioned runtime survives source replacement",
+            MagpieStableRuntimeProvisioningAsync);
+        runner.Add(
             "Magpie / config transaction rollback and conflict preservation",
             MagpieConfigTransactionRollbackAsync);
         runner.Add("Magpie / malformed and invalid requests", MagpieErrorPathsAsync);
@@ -1764,12 +1767,12 @@ internal static class Program
                     NativeClarityOnly = true,
                 })).ConfigureAwait(false);
 
-        // Clarity strength above 1.0 adds a second RCAS pass carrying the
-        // remainder, for both the smooth FSR and native-clarity modes.
+        // The strongest supported clarity setting remains one RCAS pass for
+        // both smooth FSR and native clarity, avoiding compounded texture noise.
         MagpiePortableConfigResult boosted = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.Fsr) with
             {
-                RcasSharpness = 1.5,
+                RcasSharpness = 1.0,
             }).ConfigureAwait(false);
         using JsonDocument boostedJson = JsonDocument.Parse(
             await File.ReadAllBytesAsync(boosted.ConfigPath)
@@ -1780,7 +1783,7 @@ internal static class Program
             boostedModes,
             MagpiePortableConfigService.SmoothModeName);
         JsonElement boostedFsrEffects = boostedFsr.GetProperty("effects");
-        Assert.Equal(3, boostedFsrEffects.GetArrayLength());
+        Assert.Equal(2, boostedFsrEffects.GetArrayLength());
         Assert.Equal(
             @"FSR\FSR_RCAS",
             boostedFsrEffects[1].GetProperty("name").GetString());
@@ -1790,20 +1793,11 @@ internal static class Program
                 .GetProperty("parameters")
                 .GetProperty("sharpness")
                 .GetDouble());
-        Assert.Equal(
-            @"FSR\FSR_RCAS",
-            boostedFsrEffects[2].GetProperty("name").GetString());
-        Assert.NearlyEqual(
-            0.5,
-            boostedFsrEffects[2]
-                .GetProperty("parameters")
-                .GetProperty("sharpness")
-                .GetDouble());
         JsonElement boostedClarity = FindNamed(
             boostedModes,
             MagpiePortableConfigService.NativeClarityModeName);
         Assert.Equal(
-            2,
+            1,
             boostedClarity.GetProperty("effects").GetArrayLength());
 
         MagpiePortableConfigResult smaa = await service.WriteAsync(
@@ -1847,39 +1841,30 @@ internal static class Program
             @"SMAA\SMAA_High",
             smaaCrispEffects[1].GetProperty("name").GetString());
 
-        MagpiePortableConfigResult nativeSmaaBoosted = await service.WriteAsync(
+        MagpiePortableConfigResult nativeSmaaStrong = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.Fsr) with
             {
                 NativeClarityOnly = true,
                 AntiAliasing = AntiAliasingMode.Smaa,
-                RcasSharpness = 1.2,
+                RcasSharpness = 1.0,
             }).ConfigureAwait(false);
-        using JsonDocument nativeSmaaBoostedJson = JsonDocument.Parse(
-            await File.ReadAllBytesAsync(nativeSmaaBoosted.ConfigPath)
+        using JsonDocument nativeSmaaStrongJson = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(nativeSmaaStrong.ConfigPath)
                 .ConfigureAwait(false));
-        JsonElement nativeSmaaBoostedEffects = FindNamed(
-            nativeSmaaBoostedJson.RootElement.GetProperty("scalingModes"),
+        JsonElement nativeSmaaStrongEffects = FindNamed(
+            nativeSmaaStrongJson.RootElement.GetProperty("scalingModes"),
             MagpiePortableConfigService.NativeClarityModeName)
             .GetProperty("effects");
-        Assert.Equal(3, nativeSmaaBoostedEffects.GetArrayLength());
+        Assert.Equal(2, nativeSmaaStrongEffects.GetArrayLength());
         Assert.Equal(
             @"SMAA\SMAA_High",
-            nativeSmaaBoostedEffects[0].GetProperty("name").GetString());
+            nativeSmaaStrongEffects[0].GetProperty("name").GetString());
         Assert.Equal(
             @"FSR\FSR_RCAS",
-            nativeSmaaBoostedEffects[1].GetProperty("name").GetString());
+            nativeSmaaStrongEffects[1].GetProperty("name").GetString());
         Assert.NearlyEqual(
             1.0,
-            nativeSmaaBoostedEffects[1]
-                .GetProperty("parameters")
-                .GetProperty("sharpness")
-                .GetDouble());
-        Assert.Equal(
-            @"FSR\FSR_RCAS",
-            nativeSmaaBoostedEffects[2].GetProperty("name").GetString());
-        Assert.NearlyEqual(
-            0.2,
-            nativeSmaaBoostedEffects[2]
+            nativeSmaaStrongEffects[1]
                 .GetProperty("parameters")
                 .GetProperty("sharpness")
                 .GetDouble());
@@ -1906,6 +1891,77 @@ internal static class Program
                 {
                     AntiAliasing = (AntiAliasingMode)999,
                 })).ConfigureAwait(false);
+    }
+
+    private static async Task MagpieStableRuntimeProvisioningAsync()
+    {
+        await using TempDirectory temp = new();
+        string source = Path.Combine(temp.Path, "bundled");
+        string runtimeRoot = Path.Combine(temp.Path, "runtime");
+        Directory.CreateDirectory(source);
+
+        foreach (string relativePath in MagpieRuntimeAssets.RequiredRelativePaths)
+        {
+            string assetPath = Path.Combine(source, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+            await File.WriteAllTextAsync(assetPath, relativePath)
+                .ConfigureAwait(false);
+        }
+
+        foreach (string mutableDirectory in new[] { "cache", "config", "logs" })
+        {
+            string mutablePath = Path.Combine(source, mutableDirectory);
+            Directory.CreateDirectory(mutablePath);
+            await File.WriteAllTextAsync(
+                Path.Combine(mutablePath, "stale.txt"),
+                "must not be provisioned").ConfigureAwait(false);
+        }
+
+        const string runtimeKey = "app-1.0.4-magpie-0.12.1";
+        string prepared = MagpieRuntimeProvisioner.Prepare(
+            source,
+            runtimeRoot,
+            runtimeKey);
+        Assert.Equal(Path.Combine(runtimeRoot, runtimeKey), prepared);
+        Assert.True(MagpieRuntimeAssets.IsComplete(prepared));
+        Assert.False(Directory.Exists(Path.Combine(prepared, "cache")));
+        Assert.False(Directory.Exists(Path.Combine(prepared, "config")));
+        Assert.False(Directory.Exists(Path.Combine(prepared, "logs")));
+
+        string rcasRelative = Path.Combine("effects", "FSR", "FSR_RCAS.hlsl");
+        File.Delete(Path.Combine(source, rcasRelative));
+        Assert.Equal(
+            prepared,
+            MagpieRuntimeProvisioner.Prepare(source, runtimeRoot, runtimeKey));
+        Assert.True(File.Exists(Path.Combine(prepared, rcasRelative)));
+
+        string staleRuntimeConfig = Path.Combine(prepared, "config", "config.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(staleRuntimeConfig)!);
+        await File.WriteAllTextAsync(staleRuntimeConfig, "stale runtime config")
+            .ConfigureAwait(false);
+        File.Delete(Path.Combine(prepared, rcasRelative));
+        await File.WriteAllTextAsync(Path.Combine(source, rcasRelative), rcasRelative)
+            .ConfigureAwait(false);
+
+        string repaired = MagpieRuntimeProvisioner.Prepare(
+            source,
+            runtimeRoot,
+            runtimeKey);
+        Assert.Equal(prepared, repaired);
+        Assert.True(MagpieRuntimeAssets.IsComplete(repaired));
+        Assert.False(File.Exists(staleRuntimeConfig));
+        Assert.Empty(
+            Directory.EnumerateDirectories(
+                runtimeRoot,
+                $".{runtimeKey}.*",
+                SearchOption.TopDirectoryOnly));
+
+        InvalidDataException missingAsset = Assert.Throws<InvalidDataException>(
+            () => MagpieRuntimeAssets.EnsureComplete(
+                Path.Combine(temp.Path, "missing-runtime")));
+        Assert.Contains("Missing required files", missingAsset.Message);
+        Assert.Throws<ArgumentException>(
+            () => MagpieRuntimeProvisioner.Prepare(source, runtimeRoot, ".."));
     }
 
     private static async Task MagpieConfigTransactionRollbackAsync()
@@ -2003,7 +2059,7 @@ internal static class Program
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => service.WriteAsync(fixture.CreateRequest(ScalingFilter.Fsr) with
             {
-                RcasSharpness = 2.01,
+                RcasSharpness = 1.01,
             })).ConfigureAwait(false);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => service.WriteAsync(fixture.CreateRequest(ScalingFilter.Fsr) with
@@ -5113,6 +5169,27 @@ internal static class Program
             Assert.Throws<InvalidOperationException>(
                 () => _ = harness.Magpie.StartedProcess!.Handle);
         }
+
+        MagpieScalingWindowInspection inactive = exact with
+        {
+            IsActive = false,
+            IsSafeForInput = false,
+            ScalingProcessId = null,
+            MonitorBounds = null,
+            SourceRegion = null,
+            Issues = ["Magpie's scaling window is not active."],
+        };
+        LaunchAcceptanceHarness inactiveHarness =
+            CreateLaunchAcceptanceHarness(client, sourceWindow, inactive);
+        UnsafeScalingAttachmentException inactiveFailure =
+            await Assert.ThrowsAsync<UnsafeScalingAttachmentException>(
+                () => inactiveHarness.Service.AttachExistingAsync(
+                    inactiveHarness.Request)).ConfigureAwait(false);
+        Assert.Contains("scaling window is not active", inactiveFailure.Message);
+        Assert.Contains("Engine log:", inactiveFailure.Message);
+        Assert.DoesNotContain("not owned by the exact dedicated", inactiveFailure.Message);
+        Assert.DoesNotContain("filled a different monitor", inactiveFailure.Message);
+        Assert.DoesNotContain("physical source region", inactiveFailure.Message);
     }
 
     private static async Task LaunchExactAttachmentSucceedsWithoutCleanupAsync()

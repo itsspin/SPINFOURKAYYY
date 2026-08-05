@@ -50,15 +50,19 @@ A true native-resolution 3D world with independently larger UI/nameplates would 
 
 Before an above-100% session, SpinFOURKAYYY selects or creates a verified layout profile for the exact native-to-source resolution pair and temporarily prepares the game's windowed launch size. It then opens the normal launcher, binds to the exact resulting EverQuest process and window, and scales that source window to borderless fullscreen with the bundled Magpie engine.
 
+On first use for each app version, the bundled engine is validated and copied to a dedicated runtime under `%LOCALAPPDATA%\SpinFOURKAYYY\engine-runtime`. The running scaler no longer depends on files inside a download, extracted release, or developer build folder that might be replaced while its shaders are loading. Every required FSR, Lanczos, FXAA, and SMAA asset is checked again immediately before Magpie starts.
+
 The percentage, clarity, and anti-aliasing controls are locked for the active session because changing them safely requires a fresh prepared source window. Exit EverQuest, choose new settings, and launch again; the matching layout profile is generated automatically. When scaling stops, EverQuest remains in its ordinary prepared window. When the game exits, layout changes are captured and the native layout transaction is completed.
 
 ## Adjustable clarity
 
-The **Clarity strength** slider (0–200%, default 110%) controls the RCAS sharpening applied to the visible frame in every mode:
+The **Clarity strength** slider (0–100%, default 65%) controls one bounded RCAS sharpening pass applied to the visible frame in every mode:
 
 - **0%** disables sharpening entirely.
-- **1–100%** maps to one RCAS pass of increasing strength.
-- **101–200%** adds a second RCAS pass carrying the remainder, for a visibly stronger clarity treatment than any single pass can produce.
+- **65%** is the balanced default for clearer edges without aggressively exposing texture noise.
+- **66–100%** is progressively stronger and may make older bitmap UI artwork look harsher.
+
+SpinFOURKAYYY intentionally does not stack a second sharpening pass. Consecutive RCAS passes amplify source noise, ringing, and grain instead of restoring detail that was not present in the smaller source frame.
 
 Choose clarity before launching. It remains locked during the session so SpinFOURKAYYY never has to stop and re-attach Magpie to a running EverQuest window.
 
@@ -99,11 +103,11 @@ The shaders run on the GPU and work with AMD, NVIDIA, and compatible Intel adapt
 
 ## Download and verify
 
-SpinFOURKAYYY 1.0.3 is an unsigned prototype distributed as a ZIP plus a neighboring `.zip.sha256` file.
+SpinFOURKAYYY 1.0.4 is an unsigned prototype distributed as a ZIP plus a neighboring `.zip.sha256` file.
 
 ```powershell
-(Get-FileHash -Algorithm SHA256 .\SpinFOURKAYYY-1.0.3-win-x64.zip).Hash
-Get-Content .\SpinFOURKAYYY-1.0.3-win-x64.zip.sha256
+(Get-FileHash -Algorithm SHA256 .\SpinFOURKAYYY-1.0.4-win-x64.zip).Hash
+Get-Content .\SpinFOURKAYYY-1.0.4-win-x64.zip.sha256
 ```
 
 The hexadecimal values must match. Extract the ZIP completely and run the executable from the extracted folder, not from inside the archive, `Program Files`, the EverQuest directory, or an elevated administrator session.
@@ -132,7 +136,7 @@ Requirements:
 Run:
 
 ```powershell
-.\build.ps1 -Version 1.0.3
+.\build.ps1 -Version 1.0.4
 ```
 
 The first build downloads the official pinned Magpie v0.12.1 release, verifies its SHA-256 before use, and checks out its exact audited source commit. The build then restores dependencies, compiles with warnings treated as errors, runs the deterministic self-test suite, publishes a self-contained single-file executable, verifies licenses, stages corresponding source, and creates the release ZIP plus SHA-256 sidecar under `artifacts`.
@@ -147,7 +151,7 @@ Two GitHub Actions workflows run the same `build.ps1` pipeline on `windows-lates
 To cut a release:
 
 1. Update the `<Version>`, `<FileVersion>`, and `<AssemblyVersion>` values in the app project and merge to `main`.
-2. Either push the matching tag (`git tag v1.0.3 && git push origin v1.0.3`), or open **Actions → Release → Run workflow** on `main` and enter the tag name. If the tag does not exist yet, the workflow verifies the project version first and then creates the tag itself; if it does exist, that exact tag is rebuilt and the release's assets and notes are refreshed in place.
+2. Either push the matching tag (`git tag v1.0.4 && git push origin v1.0.4`), or open **Actions → Release → Run workflow** on `main` and enter the tag name. If the tag does not exist yet, the workflow verifies the project version first and then creates the tag itself; if it does exist, that exact tag is rebuilt and the release's assets and notes are refreshed in place.
 
 ## Third-party and trademark notice
 
