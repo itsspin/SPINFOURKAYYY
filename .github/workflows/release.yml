@@ -8,7 +8,7 @@ on:
     inputs:
       tag:
         description: >-
-          Release tag (for example v1.0.1). Must match the app project
+          Release tag (for example v1.0.2). Must match the app project
           <Version>. If the tag does not exist yet it is created from the
           branch this workflow runs on; if it exists, that tag is rebuilt
           and the release assets are refreshed.
@@ -63,17 +63,28 @@ jobs:
             Write-Host "Building pushed tag $env:TAG."
             exit 0
           }
-          gh api "repos/${{ github.repository }}/git/ref/tags/$env:TAG" --silent 2>$null
-          if ($LASTEXITCODE -eq 0) {
+
+          $tagLookupOutput = gh api `
+            "repos/${{ github.repository }}/git/ref/tags/$env:TAG" `
+            --silent 2>&1
+          $tagLookupExitCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+
+          if ($tagLookupExitCode -eq 0) {
             "ref=$env:TAG" >> $env:GITHUB_OUTPUT
             "create_tag=false" >> $env:GITHUB_OUTPUT
             Write-Host "Tag $env:TAG already exists; rebuilding that exact tag."
           }
-          else {
+          elseif (($tagLookupOutput | Out-String) -match '\(HTTP 404\)') {
             "ref=$env:DISPATCH_SHA" >> $env:GITHUB_OUTPUT
             "create_tag=true" >> $env:GITHUB_OUTPUT
             Write-Host ("Tag $env:TAG does not exist yet; it will be created from " +
-              "$env:DISPATCH_SHA after the project version is verified.")
+              "$env:DISPATCH_SHA after the build and release artifacts are verified.")
+          }
+          else {
+            $details = ($tagLookupOutput | Out-String).Trim()
+            throw ("Could not determine whether tag '$env:TAG' exists. " +
+              "GitHub CLI exited with code $tagLookupExitCode. $details")
           }
           # The runner appends "exit $LASTEXITCODE" to pwsh steps, and the gh
           # probe above intentionally exits 1 when the tag is missing. Clear it
@@ -97,22 +108,6 @@ jobs:
             throw "Tag version '$tagVersion' does not match the app project <Version> '$projectVersion'. Update the project version and re-tag."
           }
           Write-Host "Tag and project agree on version $projectVersion."
-
-      - name: Create the release tag
-        if: steps.buildref.outputs.create_tag == 'true'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.tag.outputs.tag }}
-          SHA: ${{ github.sha }}
-        run: |
-          gh api "repos/${{ github.repository }}/git/refs" `
-            -f "ref=refs/tags/$env:TAG" `
-            -f "sha=$env:SHA"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not create tag '$env:TAG' at $env:SHA."
-          }
-          Write-Host "Created tag $env:TAG at $env:SHA."
 
       - name: Set up .NET SDK 9
         uses: actions/setup-dotnet@v4
@@ -185,11 +180,40 @@ jobs:
 
           1. Extract the complete ZIP into a normal user-writable folder (not ``Program Files`` or the EverQuest directory).
           2. Keep ``SpinFOURKAYYY.exe``, ``Engine``, and the notice/license files together.
-          3. Run ``SpinFOURKAYYY.exe``. See the README for the Native clarity (100%) and 101–200% scaling workflow.
+          3. Run ``SpinFOURKAYYY.exe``, choose a size, and use ``Start EverQuest for me``. See the README for Native clarity (100%) and automatic personal layouts at 101–200%.
 
           This build was produced by the tagged Release workflow run, including the deterministic self-test suite, pinned Magpie v0.12.1 verification, and license checks.
           "@
           Set-Content -LiteralPath 'release-notes.md' -Value $notes -Encoding utf8NoBOM
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpinFOURKAYYY-${{ steps.tag.outputs.version }}-win-x64-release
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.sidecar }}
+            release-notes.md
+          if-no-files-found: error
+
+      - name: Create the release tag
+        if: steps.buildref.outputs.create_tag == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') {
+            throw "Could not resolve the checked-out release commit."
+          }
+          gh api "repos/${{ github.repository }}/git/refs" `
+            -f "ref=refs/tags/$env:TAG" `
+            -f "sha=$sha"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not create tag '$env:TAG' at $sha."
+          }
+          Write-Host "Created tag $env:TAG at $sha."
 
       - name: Publish GitHub release
         shell: pwsh
@@ -202,8 +226,14 @@ jobs:
           if ($version.Contains('-')) {
             $prereleaseFlag = @('--prerelease')
           }
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
+
+          $releaseLookupOutput = gh api `
+            "repos/${{ github.repository }}/releases/tags/$tag" `
+            --silent 2>&1
+          $releaseLookupExitCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+
+          if ($releaseLookupExitCode -eq 0) {
             Write-Host "Release $tag already exists; refreshing its assets and notes."
             gh release upload $tag `
               '${{ steps.package.outputs.zip }}' `
@@ -220,7 +250,7 @@ jobs:
               throw "gh release edit failed with exit code $LASTEXITCODE"
             }
           }
-          else {
+          elseif (($releaseLookupOutput | Out-String) -match '\(HTTP 404\)') {
             gh release create $tag `
               '${{ steps.package.outputs.zip }}' `
               '${{ steps.package.outputs.sidecar }}' `
@@ -232,13 +262,8 @@ jobs:
               throw "gh release create failed with exit code $LASTEXITCODE"
             }
           }
-
-      - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: SpinFOURKAYYY-${{ steps.tag.outputs.version }}-win-x64-release
-          path: |
-            ${{ steps.package.outputs.zip }}
-            ${{ steps.package.outputs.sidecar }}
-            release-notes.md
-          if-no-files-found: error
+          else {
+            $details = ($releaseLookupOutput | Out-String).Trim()
+            throw ("Could not determine whether release '$tag' exists. " +
+              "GitHub CLI exited with code $releaseLookupExitCode. $details")
+          }

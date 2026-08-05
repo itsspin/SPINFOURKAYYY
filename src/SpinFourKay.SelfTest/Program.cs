@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using SpinFourKay.Core.Backup;
 using SpinFourKay.Core.Configuration;
 using SpinFourKay.Core.Display;
+using SpinFourKay.Core.Layouts;
 using SpinFourKay.Core.Magpie;
 using SpinFourKay.Core.Orchestration;
 using SpinFourKay.Core.Windows;
@@ -58,6 +59,15 @@ internal static class Program
         runner.Add("INI / mixed newlines and insertion", IniMixedNewlinesAndInsertion);
         runner.Add("INI / BOM and legacy-byte preservation", IniBomAndLegacyBytePreservationAsync);
         runner.Add("INI / invalid input errors", IniInvalidInputErrors);
+        runner.Add(
+            "UI layout / generic geometry preserves personal data",
+            UiLayoutGenericGeometryPreservesPersonalData);
+        runner.Add(
+            "UI layout / automatic profile capture and native restore",
+            UiLayoutAutomaticProfileLifecycleAsync);
+        runner.Add(
+            "UI layout / rollback and interrupted restore recovery",
+            UiLayoutRollbackAndInterruptedRestoreRecoveryAsync);
         runner.Add("Configuration / atomic fake-client edit", ConfigurationAtomicFakeClientEditAsync);
         runner.Add("Configuration / native UI-scale guard", ConfigurationNativeUiScaleGuardAsync);
         runner.Add("Configuration / missing file and cancellation", ConfigurationErrorPathsAsync);
@@ -876,6 +886,277 @@ internal static class Program
         Assert.Throws<ArgumentException>(() => document.SetValue("Good", "Bad=Key", "x"));
         Assert.Throws<ArgumentException>(() => document.SetValue("Good", "Key", "line1\nline2"));
         Assert.Throws<ArgumentException>(() => document.GetValue("Good", " "));
+    }
+
+    private static void UiLayoutGenericGeometryPreservesPersonalData()
+    {
+        byte[] native =
+        [
+            .. Encoding.ASCII.GetBytes(
+                "[Main]\r\n"
+                    + "UISkin=someone_elses_custom_ui\r\n"
+                    + "[MainChat]\r\n"
+                    + "XRef=left\r\n"
+                    + "YRef=bottom\r\n"
+                    + "XPos=16.249998%\r\n"
+                    + "YPos=0.555556%\r\n"
+                    + "Width=552\r\n"
+                    + "Height=212\r\n"
+                    + "ChatWindow0_Width=552\r\n"
+                    + "Label=caf"),
+            0xE9,
+            .. Encoding.ASCII.GetBytes("\r\n[Second]\nWidth=706\nHeight=209\n"),
+        ];
+
+        UiLayoutTransformResult scaled = UiLayoutTransformer.Transform(
+            native,
+            new PixelSize(3440, 1440),
+            new PixelSize(2866, 1200));
+        string text = Encoding.Latin1.GetString(scaled.Content);
+        Assert.Equal(2, scaled.ScaledWidthCount);
+        Assert.Equal(2, scaled.ScaledHeightCount);
+        Assert.Contains("UISkin=someone_elses_custom_ui\r\n", text);
+        Assert.Contains("XPos=16.249998%\r\n", text);
+        Assert.Contains("YPos=0.555556%\r\n", text);
+        Assert.Contains("Width=460\r\n", text);
+        Assert.Contains("Height=177\r\n", text);
+        Assert.Contains("ChatWindow0_Width=552\r\n", text);
+        Assert.Contains("Width=588\n", text);
+        Assert.Contains("Height=174\n", text);
+        Assert.True(scaled.Content.Contains((byte)0xE9));
+
+        UiLayoutTransformResult roundTrip = UiLayoutTransformer.Transform(
+            scaled.Content,
+            new PixelSize(2866, 1200),
+            new PixelSize(3440, 1440));
+        Assert.SequenceEqual(native, roundTrip.Content);
+    }
+
+    private static async Task UiLayoutAutomaticProfileLifecycleAsync()
+    {
+        await using TempDirectory temp = new();
+        string eqDirectory = Path.Combine(temp.Path, "Different EverQuest Install");
+        string stateRoot = Path.Combine(temp.Path, "controller state");
+        Directory.CreateDirectory(eqDirectory);
+
+        string eqClientPath = Path.Combine(eqDirectory, "eqclient.ini");
+        const string originalEqClient =
+            "; user formatting stays\r\n"
+            + "[Defaults]\r\n"
+            + "AllowResize=1\r\n"
+            + "Maximized=1\r\n"
+            + "WindowedModeXOffset=77\r\n"
+            + "WindowedModeYOffset=88\r\n"
+            + "UIScale=2\r\n"
+            + "Unrelated=preserve\r\n"
+            + "[VideoMode]\r\n"
+            + "Width=3440\r\n"
+            + "Height=1440\r\n"
+            + "WindowedWidth=1720\r\n"
+            + "WindowedHeight=720\r\n"
+            + "Fullscreen=1\r\n";
+        await File.WriteAllTextAsync(eqClientPath, originalEqClient).ConfigureAwait(false);
+
+        string layoutPath = Path.Combine(eqDirectory, "UI_Old_mischief_LO7.ini");
+        byte[] originalLayout = Encoding.Latin1.GetBytes(
+            "[Main]\r\n"
+                + "UISkin=totally_custom_skin\r\n"
+                + "[MainChat]\r\n"
+                + "XPos=16.249998%\r\n"
+                + "YPos=0.555556%\r\n"
+                + "Width=552\r\n"
+                + "Height=212\r\n"
+                + "UserLabel=café\r\n");
+        await File.WriteAllBytesAsync(layoutPath, originalLayout).ConfigureAwait(false);
+
+        string backupLayoutPath = Path.Combine(
+            eqDirectory,
+            "UI_Old_mischief_backup_LO7.ini");
+        byte[] backupLayout = Encoding.ASCII.GetBytes(
+            "[MainChat]\r\nWidth=999\r\nHeight=999\r\n");
+        await File.WriteAllBytesAsync(backupLayoutPath, backupLayout).ConfigureAwait(false);
+
+        string characterPath = Path.Combine(eqDirectory, "Old_mischief.ini");
+        byte[] characterSettings = Encoding.ASCII.GetBytes(
+            "[HotButtons]\r\nPage1Button1=/assist group\r\n[Socials]\r\nPage1Name1=Incoming\r\n");
+        await File.WriteAllBytesAsync(characterPath, characterSettings).ConfigureAwait(false);
+
+        UiLayoutProfileService service = new();
+        UiLayoutPrepareResult prepared = await service.PrepareAsync(
+            new UiLayoutPrepareRequest
+            {
+                EqDirectory = eqDirectory,
+                StateRoot = stateRoot,
+                NativeResolution = new PixelSize(3440, 1440),
+                ScaledResolution = new PixelSize(2866, 1200),
+            }).ConfigureAwait(false);
+
+        Assert.Equal(1, prepared.LayoutCount);
+        Assert.Equal(1, prepared.GeneratedProfileCount);
+        Assert.Equal(0, prepared.ReusedProfileCount);
+        Assert.Equal(UiLayoutSessionStatus.Active, prepared.State.Status);
+        string scaledLayout = Encoding.Latin1.GetString(
+            await File.ReadAllBytesAsync(layoutPath).ConfigureAwait(false));
+        Assert.Contains("UISkin=totally_custom_skin\r\n", scaledLayout);
+        Assert.Contains("XPos=16.249998%\r\n", scaledLayout);
+        Assert.Contains("Width=460\r\n", scaledLayout);
+        Assert.Contains("Height=177\r\n", scaledLayout);
+        Assert.Contains("UserLabel=café\r\n", scaledLayout);
+        Assert.SequenceEqual(
+            backupLayout,
+            await File.ReadAllBytesAsync(backupLayoutPath).ConfigureAwait(false));
+        Assert.SequenceEqual(
+            characterSettings,
+            await File.ReadAllBytesAsync(characterPath).ConfigureAwait(false));
+
+        IniDocument preparedEqClient = await IniDocument.LoadAsync(eqClientPath)
+            .ConfigureAwait(false);
+        Assert.Equal("2866", preparedEqClient.GetValue("VideoMode", "Width"));
+        Assert.Equal("1200", preparedEqClient.GetValue("VideoMode", "Height"));
+        Assert.Equal("0", preparedEqClient.GetValue("VideoMode", "Fullscreen"));
+        Assert.Equal("0", preparedEqClient.GetValue("Defaults", "UIScale"));
+        Assert.Equal("preserve", preparedEqClient.GetValue("Defaults", "Unrelated"));
+
+        string playerAdjustedScaledLayout = scaledLayout
+            .Replace("Width=460", "Width=500", StringComparison.Ordinal)
+            + "[ChatManager]\r\nChannelMap=keep-this-change\r\n";
+        await File.WriteAllBytesAsync(
+            layoutPath,
+            Encoding.Latin1.GetBytes(playerAdjustedScaledLayout)).ConfigureAwait(false);
+
+        string newLayoutPath = Path.Combine(eqDirectory, "UI_Bryn_bertoxxulous.ini");
+        await File.WriteAllTextAsync(
+            newLayoutPath,
+            "[Main]\r\nUISkin=another_ui\r\n[Inventory]\r\nXPos=40.000000%\r\nWidth=300\r\nHeight=100\r\n")
+            .ConfigureAwait(false);
+
+        preparedEqClient.SetValue("Player", "SavedDuringGame", "yes");
+        await preparedEqClient.SaveAtomicAsync(eqClientPath).ConfigureAwait(false);
+
+        UiLayoutCompleteResult completed = await service.CompleteAsync(prepared.State)
+            .ConfigureAwait(false);
+        Assert.Equal(UiLayoutSessionStatus.Completed, completed.State.Status);
+        Assert.Equal(2, completed.CapturedProfileCount);
+        Assert.Equal(2, completed.ConvertedBackCount);
+        Assert.Equal(1, completed.NewLayoutCount);
+
+        byte[] nativeAfterComplete = await File.ReadAllBytesAsync(layoutPath)
+            .ConfigureAwait(false);
+        string completedLayout = Encoding.Latin1.GetString(nativeAfterComplete);
+        Assert.Contains("Width=600\r\n", completedLayout);
+        Assert.Contains("Height=212\r\n", completedLayout);
+        Assert.Contains("UISkin=totally_custom_skin\r\n", completedLayout);
+        Assert.Contains("ChannelMap=keep-this-change\r\n", completedLayout);
+        string completedNewLayout = await File.ReadAllTextAsync(newLayoutPath)
+            .ConfigureAwait(false);
+        Assert.Contains("UISkin=another_ui\r\n", completedNewLayout);
+        Assert.Contains("XPos=40.000000%\r\n", completedNewLayout);
+        Assert.Contains("Width=360\r\n", completedNewLayout);
+        Assert.Contains("Height=120\r\n", completedNewLayout);
+
+        IniDocument restoredEqClient = await IniDocument.LoadAsync(eqClientPath)
+            .ConfigureAwait(false);
+        Assert.Equal("3440", restoredEqClient.GetValue("VideoMode", "Width"));
+        Assert.Equal("1440", restoredEqClient.GetValue("VideoMode", "Height"));
+        Assert.Equal("1720", restoredEqClient.GetValue("VideoMode", "WindowedWidth"));
+        Assert.Equal("720", restoredEqClient.GetValue("VideoMode", "WindowedHeight"));
+        Assert.Equal("1", restoredEqClient.GetValue("VideoMode", "Fullscreen"));
+        Assert.Equal("2", restoredEqClient.GetValue("Defaults", "UIScale"));
+        Assert.Equal("yes", restoredEqClient.GetValue("Player", "SavedDuringGame"));
+        Assert.Null(await service.LoadActiveAsync(eqDirectory, stateRoot).ConfigureAwait(false));
+        Assert.SequenceEqual(
+            backupLayout,
+            await File.ReadAllBytesAsync(backupLayoutPath).ConfigureAwait(false));
+        Assert.SequenceEqual(
+            characterSettings,
+            await File.ReadAllBytesAsync(characterPath).ConfigureAwait(false));
+        Assert.True(completed.State.Entries.All(
+            entry => File.Exists(entry.ScaledProfilePath)
+                && File.Exists(entry.ScaledProfilePath + ".sha256")));
+
+        UiLayoutPrepareResult reused = await service.PrepareAsync(
+            new UiLayoutPrepareRequest
+            {
+                EqDirectory = eqDirectory,
+                StateRoot = stateRoot,
+                NativeResolution = new PixelSize(3440, 1440),
+                ScaledResolution = new PixelSize(2866, 1200),
+            }).ConfigureAwait(false);
+        Assert.Equal(0, reused.GeneratedProfileCount);
+        Assert.Equal(2, reused.ReusedProfileCount);
+        Assert.Contains(
+            "Width=500\r\n",
+            Encoding.Latin1.GetString(
+                await File.ReadAllBytesAsync(layoutPath).ConfigureAwait(false)));
+        await service.RollbackAsync(reused.State).ConfigureAwait(false);
+        Assert.SequenceEqual(
+            nativeAfterComplete,
+            await File.ReadAllBytesAsync(layoutPath).ConfigureAwait(false));
+        Assert.SequenceEqual(
+            characterSettings,
+            await File.ReadAllBytesAsync(characterPath).ConfigureAwait(false));
+    }
+
+    private static async Task UiLayoutRollbackAndInterruptedRestoreRecoveryAsync()
+    {
+        await using TempDirectory temp = new();
+        string eqDirectory = Path.Combine(temp.Path, "EQ");
+        string stateRoot = Path.Combine(temp.Path, "State");
+        Directory.CreateDirectory(eqDirectory);
+        string eqClientPath = Path.Combine(eqDirectory, "eqclient.ini");
+        byte[] originalEqClient = Encoding.ASCII.GetBytes(
+            "[Defaults]\r\nUIScale=3\r\n[VideoMode]\r\nWidth=3440\r\nHeight=1440\r\n"
+                + "WindowedWidth=1600\r\nWindowedHeight=900\r\nFullscreen=1\r\n");
+        await File.WriteAllBytesAsync(eqClientPath, originalEqClient).ConfigureAwait(false);
+        string layoutPath = Path.Combine(eqDirectory, "UI_One_firiona.ini");
+        byte[] originalLayout = Encoding.ASCII.GetBytes(
+            "[Main]\r\nUISkin=default\r\n[Chat]\r\nXPos=10.000000%\r\nWidth=552\r\nHeight=212\r\n");
+        await File.WriteAllBytesAsync(layoutPath, originalLayout).ConfigureAwait(false);
+
+        UiLayoutProfileService service = new();
+        UiLayoutPrepareRequest request = new()
+        {
+            EqDirectory = eqDirectory,
+            StateRoot = stateRoot,
+            NativeResolution = new PixelSize(3440, 1440),
+            ScaledResolution = new PixelSize(2866, 1200),
+        };
+        UiLayoutPrepareResult first = await service.PrepareAsync(request)
+            .ConfigureAwait(false);
+        await File.WriteAllTextAsync(layoutPath, "unexpected scaled edit")
+            .ConfigureAwait(false);
+        UiLayoutSessionState rolledBack = await service.RollbackAsync(first.State)
+            .ConfigureAwait(false);
+        Assert.Equal(UiLayoutSessionStatus.RolledBack, rolledBack.Status);
+        Assert.SequenceEqual(
+            originalLayout,
+            await File.ReadAllBytesAsync(layoutPath).ConfigureAwait(false));
+        Assert.SequenceEqual(
+            originalEqClient,
+            await File.ReadAllBytesAsync(eqClientPath).ConfigureAwait(false));
+
+        UiLayoutPrepareResult interrupted = await service.PrepareAsync(request)
+            .ConfigureAwait(false);
+        JsonObject journal = JsonNode.Parse(
+            await File.ReadAllTextAsync(interrupted.State.JournalPath).ConfigureAwait(false))!
+            .AsObject();
+        journal["status"] = "restoring";
+        await File.WriteAllTextAsync(
+            interrupted.State.JournalPath,
+            journal.ToJsonString(new JsonSerializerOptions { WriteIndented = true }))
+            .ConfigureAwait(false);
+        await File.WriteAllBytesAsync(layoutPath, originalLayout).ConfigureAwait(false);
+
+        UiLayoutCompleteResult recovered = await service.CompleteAsync(interrupted.State)
+            .ConfigureAwait(false);
+        Assert.Equal(UiLayoutSessionStatus.Completed, recovered.State.Status);
+        Assert.SequenceEqual(
+            originalLayout,
+            await File.ReadAllBytesAsync(layoutPath).ConfigureAwait(false));
+        Assert.SequenceEqual(
+            originalEqClient,
+            await File.ReadAllBytesAsync(eqClientPath).ConfigureAwait(false));
+        Assert.Null(await service.LoadActiveAsync(eqDirectory, stateRoot).ConfigureAwait(false));
     }
 
     private static async Task ConfigurationAtomicFakeClientEditAsync()

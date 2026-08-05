@@ -65,6 +65,9 @@ internal static class PathLocator
 
     public static string BackupRoot => Path.Combine(StateRoot, "backups");
 
+    public static string LayoutProfileRoot =>
+        Path.Combine(StateRoot, "layout-profiles");
+
     private static IEnumerable<string> EnumerateLegendsCandidates()
     {
         yield return Environment.CurrentDirectory;
