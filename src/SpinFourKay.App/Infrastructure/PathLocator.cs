@@ -1,9 +1,12 @@
 using System.IO;
+using SpinFourKay.Core.Magpie;
 
 namespace SpinFourKay.App.Infrastructure;
 
 internal static class PathLocator
 {
+    private const string MagpieBundleVersion = "0.12.1";
+
     public static string? FindLegendsDirectory()
     {
         foreach (string candidate in EnumerateLegendsCandidates())
@@ -43,19 +46,46 @@ internal static class PathLocator
 
     public static string FindMagpieDirectory()
     {
+        string appVersion = typeof(PathLocator).Assembly.GetName().Version
+            ?.ToString(3)
+            ?? "unknown";
+        string runtimeKey = $"app-{appVersion}-magpie-{MagpieBundleVersion}";
+        string runtimeRoot = Path.Combine(StateRoot, "engine-runtime");
+        string prepared = Path.Combine(runtimeRoot, runtimeKey);
+        if (MagpieRuntimeAssets.IsComplete(prepared))
+        {
+            return prepared;
+        }
+
         foreach (string candidate in EnumerateMagpieCandidates())
         {
-            string executable = Path.Combine(candidate, "Magpie.exe");
-            string effects = Path.Combine(candidate, "effects");
-            if (File.Exists(executable) && Directory.Exists(effects))
+            if (MagpieRuntimeAssets.IsComplete(candidate))
             {
-                return Path.GetFullPath(candidate);
+                try
+                {
+                    return MagpieRuntimeProvisioner.Prepare(
+                        candidate,
+                        runtimeRoot,
+                        runtimeKey);
+                }
+                catch (Exception exception) when (
+                    exception is IOException
+                    or UnauthorizedAccessException
+                    or InvalidDataException)
+                {
+                    throw new DirectoryNotFoundException(
+                        "The bundled Magpie engine could not be copied to its stable "
+                            + "per-version runtime. Close any old SpinFOURKAYYY or "
+                            + "Magpie process, then re-extract the complete release.",
+                        exception);
+                }
             }
         }
 
         throw new DirectoryNotFoundException(
-            "The bundled Magpie scaling engine is missing. Re-extract the complete "
-            + "SpinFOURKAYYY release, including Engine\\Magpie.");
+            "The bundled Magpie scaling engine or one of its required shaders is "
+            + "missing. Re-extract the complete SpinFOURKAYYY release, including "
+            + "Engine\\Magpie.");
     }
 
     public static string StateRoot =>

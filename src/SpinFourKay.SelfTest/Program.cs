@@ -85,6 +85,9 @@ internal static class Program
         runner.Add("Magpie / portable JSON schema and exact profile", MagpiePortableJsonSchemaAsync);
         runner.Add("Magpie / profile upsert and every filter", MagpieProfileUpsertAndFiltersAsync);
         runner.Add(
+            "Magpie / stable versioned runtime survives source replacement",
+            MagpieStableRuntimeProvisioningAsync);
+        runner.Add(
             "Magpie / config transaction rollback and conflict preservation",
             MagpieConfigTransactionRollbackAsync);
         runner.Add("Magpie / malformed and invalid requests", MagpieErrorPathsAsync);
@@ -261,7 +264,7 @@ internal static class Program
         Assert.Equal(new PixelSize(2560, 1440), balanced.SourceResolution);
         Assert.Equal(new PixelRect(0, 0, 3840, 2160), balanced.DestinationContent);
         Assert.NearlyEqual(1.5, balanced.ActualUiScale);
-        Assert.Equal(ScalingFilter.Fsr, balanced.Filter);
+        Assert.Equal(ScalingFilter.Nis, balanced.Filter);
         Assert.False(balanced.UsesIntegerScale);
 
         ResolutionPlan comfort = planner.CreatePlan(target, ResolutionPresetKind.Comfort);
@@ -439,22 +442,29 @@ internal static class Program
             Assert.Equal(
                 hundredths == FineUiScale.MaximumHundredths
                     ? ScalingFilter.NearestNeighbor
-                    : ScalingFilter.Fsr,
+                    : ScalingFilter.Nis,
                 GenericUiScalePolicy.NormalizeFilter(
                     current,
                     ScalingFilter.NearestNeighbor));
             Assert.Equal(
-                ScalingFilter.Fsr,
+                hundredths == FineUiScale.MinimumHundredths
+                    ? ScalingFilter.Nis
+                    : ScalingFilter.Fsr,
                 GenericUiScalePolicy.NormalizeFilter(
                     current,
                     ScalingFilter.Fsr));
             Assert.Equal(
                 hundredths == FineUiScale.MinimumHundredths
-                    ? ScalingFilter.Fsr
+                    ? ScalingFilter.Nis
                     : ScalingFilter.Lanczos,
                 GenericUiScalePolicy.NormalizeFilter(
                     current,
                     ScalingFilter.Lanczos));
+            Assert.Equal(
+                ScalingFilter.Nis,
+                GenericUiScalePolicy.NormalizeFilter(
+                    current,
+                    ScalingFilter.Nis));
         }
 
         Assert.Equal(
@@ -566,7 +576,7 @@ internal static class Program
             new PixelSize(3441, 1440),
             2.0,
             ScalingFilter.NearestNeighbor);
-        Assert.Equal(ScalingFilter.Fsr, oddWidth.Filter);
+        Assert.Equal(ScalingFilter.Nis, oddWidth.Filter);
         Assert.True(
             oddWidth.SourceResolution.Width < 3441,
             "The fallback must still render at a reduced source size.");
@@ -579,7 +589,7 @@ internal static class Program
         ResolutionPlan floor = planner.CreatePlan(
             new PixelSize(1280, 720),
             ResolutionPresetKind.PixelCrisp);
-        Assert.Equal(ScalingFilter.Fsr, floor.Filter);
+        Assert.Equal(ScalingFilter.Nis, floor.Filter);
         Assert.True(
             floor.ActualUiScale > 1.0,
             "The fallback plan must remain an enlargement.");
@@ -705,7 +715,7 @@ internal static class Program
             fourK,
             new PixelSize(1920, 1080));
         Assert.Equal(ResolutionPresetKind.Custom, comfort.ResolutionPlan.PresetKind);
-        Assert.Equal(ScalingFilter.Fsr, comfort.Filter);
+        Assert.Equal(ScalingFilter.Nis, comfort.Filter);
         Assert.Equal(new PixelRect(0, 0, 3840, 2160), comfort.DestinationContent);
         Assert.NearlyEqual(0, comfort.RelativeAspectError);
         Assert.NearlyEqual(2, comfort.ActualUiScale);
@@ -1656,7 +1666,7 @@ internal static class Program
         Assert.False(root.GetProperty("autoCheckForUpdates").GetBoolean());
 
         JsonElement modes = root.GetProperty("scalingModes");
-        Assert.Equal(5, modes.GetArrayLength());
+        Assert.Equal(6, modes.GetArrayLength());
         Assert.Equal("User mode", modes[0].GetProperty("name").GetString());
         JsonElement fsr = FindNamed(modes, MagpiePortableConfigService.SmoothModeName);
         JsonElement fsrEffects = fsr.GetProperty("effects");
@@ -1668,14 +1678,41 @@ internal static class Program
                 .GetProperty("parameters")
                 .GetProperty("sharpness")
                 .GetDouble());
+        JsonElement readable = FindNamed(
+            modes,
+            MagpiePortableConfigService.ReadableModeName);
+        JsonElement readableEffects = readable.GetProperty("effects");
+        Assert.Equal(1, readableEffects.GetArrayLength());
+        Assert.Equal(
+            @"NIS\NIS",
+            readableEffects[0].GetProperty("name").GetString());
+        Assert.Equal(1, readableEffects[0].GetProperty("scalingType").GetInt32());
+        Assert.NearlyEqual(
+            1.0,
+            readableEffects[0].GetProperty("scale").GetProperty("x").GetDouble());
+        Assert.NearlyEqual(
+            1.0,
+            readableEffects[0].GetProperty("scale").GetProperty("y").GetDouble());
+        Assert.NearlyEqual(
+            0.66,
+            readableEffects[0]
+                .GetProperty("parameters")
+                .GetProperty("sharpness")
+                .GetDouble());
         JsonElement nativeClarity = FindNamed(
             modes,
             MagpiePortableConfigService.NativeClarityModeName);
         JsonElement nativeEffects = nativeClarity.GetProperty("effects");
         Assert.Equal(1, nativeEffects.GetArrayLength());
-        Assert.Equal(
-            @"FSR\FSR_RCAS",
-            nativeEffects[0].GetProperty("name").GetString());
+        Assert.Equal("Nearest", nativeEffects[0].GetProperty("name").GetString());
+        Assert.Equal(1, nativeEffects[0].GetProperty("scalingType").GetInt32());
+        Assert.NearlyEqual(
+            1.0,
+            nativeEffects[0].GetProperty("scale").GetProperty("x").GetDouble());
+        Assert.NearlyEqual(
+            1.0,
+            nativeEffects[0].GetProperty("scale").GetProperty("y").GetDouble());
+        Assert.False(nativeEffects[0].TryGetProperty("parameters", out _));
 
         JsonElement profiles = root.GetProperty("profiles");
         Assert.Equal(3, profiles.GetArrayLength());
@@ -1719,6 +1756,8 @@ internal static class Program
 
         MagpiePortableConfigResult fsrResult = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.Fsr)).ConfigureAwait(false);
+        MagpiePortableConfigResult readableResult = await service.WriteAsync(
+            fixture.CreateRequest(ScalingFilter.Nis)).ConfigureAwait(false);
         MagpiePortableConfigResult crispResult = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.NearestNeighbor)).ConfigureAwait(false);
         MagpiePortableConfigResult lanczosResult = await service.WriteAsync(
@@ -1729,12 +1768,14 @@ internal static class Program
                 NativeClarityOnly = true,
             }).ConfigureAwait(false);
 
-        Assert.True(fsrResult.ScalingModeIndex != crispResult.ScalingModeIndex);
+        Assert.True(fsrResult.ScalingModeIndex != readableResult.ScalingModeIndex);
+        Assert.True(readableResult.ScalingModeIndex != crispResult.ScalingModeIndex);
         Assert.True(crispResult.ScalingModeIndex != lanczosResult.ScalingModeIndex);
         Assert.True(
             nativeClarityResult.ScalingModeIndex
                 != fsrResult.ScalingModeIndex);
-        Assert.Equal(fsrResult.ProfileIndex, crispResult.ProfileIndex);
+        Assert.Equal(fsrResult.ProfileIndex, readableResult.ProfileIndex);
+        Assert.Equal(readableResult.ProfileIndex, crispResult.ProfileIndex);
         Assert.Equal(crispResult.ProfileIndex, lanczosResult.ProfileIndex);
         Assert.Equal(
             lanczosResult.ProfileIndex,
@@ -1745,7 +1786,7 @@ internal static class Program
                 .ConfigureAwait(false));
         JsonElement modes = json.RootElement.GetProperty("scalingModes");
         JsonElement profiles = json.RootElement.GetProperty("profiles");
-        Assert.Equal(4, modes.GetArrayLength());
+        Assert.Equal(5, modes.GetArrayLength());
         Assert.Equal(2, profiles.GetArrayLength());
         Assert.Equal(
             MagpiePortableConfigService.NativeClarityModeName,
@@ -1753,23 +1794,33 @@ internal static class Program
                 .GetProperty("name")
                 .GetString());
         Assert.Equal(
+            MagpiePortableConfigService.ReadableModeName,
+            modes[readableResult.ScalingModeIndex]
+                .GetProperty("name")
+                .GetString());
+        Assert.Equal(
             nativeClarityResult.ScalingModeIndex,
             profiles[nativeClarityResult.ProfileIndex]
                 .GetProperty("scalingMode")
                 .GetInt32());
-        await Assert.ThrowsAsync<ArgumentException>(
-            () => service.WriteAsync(
+        MagpiePortableConfigResult nativeCompatibilityResult =
+            await service.WriteAsync(
                 fixture.CreateRequest(ScalingFilter.Lanczos) with
                 {
                     NativeClarityOnly = true,
-                })).ConfigureAwait(false);
+                    AntiAliasing = AntiAliasingMode.Fxaa,
+                    RcasSharpness = 1.0,
+                }).ConfigureAwait(false);
+        Assert.Equal(
+            nativeClarityResult.ScalingModeIndex,
+            nativeCompatibilityResult.ScalingModeIndex);
 
-        // Clarity strength above 1.0 adds a second RCAS pass carrying the
-        // remainder, for both the smooth FSR and native-clarity modes.
+        // The strongest supported FSR clarity setting remains one RCAS pass,
+        // avoiding compounded texture noise.
         MagpiePortableConfigResult boosted = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.Fsr) with
             {
-                RcasSharpness = 1.5,
+                RcasSharpness = 1.0,
             }).ConfigureAwait(false);
         using JsonDocument boostedJson = JsonDocument.Parse(
             await File.ReadAllBytesAsync(boosted.ConfigPath)
@@ -1780,7 +1831,7 @@ internal static class Program
             boostedModes,
             MagpiePortableConfigService.SmoothModeName);
         JsonElement boostedFsrEffects = boostedFsr.GetProperty("effects");
-        Assert.Equal(3, boostedFsrEffects.GetArrayLength());
+        Assert.Equal(2, boostedFsrEffects.GetArrayLength());
         Assert.Equal(
             @"FSR\FSR_RCAS",
             boostedFsrEffects[1].GetProperty("name").GetString());
@@ -1790,21 +1841,15 @@ internal static class Program
                 .GetProperty("parameters")
                 .GetProperty("sharpness")
                 .GetDouble());
-        Assert.Equal(
-            @"FSR\FSR_RCAS",
-            boostedFsrEffects[2].GetProperty("name").GetString());
-        Assert.NearlyEqual(
-            0.5,
-            boostedFsrEffects[2]
-                .GetProperty("parameters")
-                .GetProperty("sharpness")
-                .GetDouble());
         JsonElement boostedClarity = FindNamed(
             boostedModes,
             MagpiePortableConfigService.NativeClarityModeName);
+        JsonElement boostedNativeEffects = boostedClarity.GetProperty("effects");
+        Assert.Equal(1, boostedNativeEffects.GetArrayLength());
         Assert.Equal(
-            2,
-            boostedClarity.GetProperty("effects").GetArrayLength());
+            "Nearest",
+            boostedNativeEffects[0].GetProperty("name").GetString());
+        Assert.False(boostedNativeEffects[0].TryGetProperty("parameters", out _));
 
         MagpiePortableConfigResult smaa = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.Fsr) with
@@ -1828,16 +1873,36 @@ internal static class Program
         Assert.Equal(
             @"FSR\FSR_RCAS",
             smaaFsrEffects[2].GetProperty("name").GetString());
+        JsonElement smaaReadableEffects = FindNamed(
+            smaaModes,
+            MagpiePortableConfigService.ReadableModeName).GetProperty("effects");
+        Assert.Equal(1, smaaReadableEffects.GetArrayLength());
+        Assert.Equal(
+            @"NIS\NIS",
+            smaaReadableEffects[0].GetProperty("name").GetString());
+        Assert.NearlyEqual(
+            0.75,
+            smaaReadableEffects[0]
+                .GetProperty("parameters")
+                .GetProperty("sharpness")
+                .GetDouble());
+        string[] readableEffectNames = smaaReadableEffects
+            .EnumerateArray()
+            .Select(effect => effect.GetProperty("name").GetString() ?? string.Empty)
+            .ToArray();
+        Assert.False(
+            readableEffectNames.Any(
+                name => name.Contains("RCAS", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("SMAA", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("FXAA", StringComparison.OrdinalIgnoreCase)));
         JsonElement smaaNativeEffects = FindNamed(
             smaaModes,
             MagpiePortableConfigService.NativeClarityModeName).GetProperty("effects");
-        Assert.Equal(2, smaaNativeEffects.GetArrayLength());
+        Assert.Equal(1, smaaNativeEffects.GetArrayLength());
         Assert.Equal(
-            @"SMAA\SMAA_High",
+            "Nearest",
             smaaNativeEffects[0].GetProperty("name").GetString());
-        Assert.Equal(
-            @"FSR\FSR_RCAS",
-            smaaNativeEffects[1].GetProperty("name").GetString());
+        Assert.False(smaaNativeEffects[0].TryGetProperty("parameters", out _));
         JsonElement smaaCrispEffects = FindNamed(
             smaaModes,
             MagpiePortableConfigService.PixelCrispModeName).GetProperty("effects");
@@ -1847,42 +1912,40 @@ internal static class Program
             @"SMAA\SMAA_High",
             smaaCrispEffects[1].GetProperty("name").GetString());
 
-        MagpiePortableConfigResult nativeSmaaBoosted = await service.WriteAsync(
+        MagpiePortableConfigResult nativeSmaaStrong = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.Fsr) with
             {
                 NativeClarityOnly = true,
                 AntiAliasing = AntiAliasingMode.Smaa,
-                RcasSharpness = 1.2,
+                RcasSharpness = 1.0,
             }).ConfigureAwait(false);
-        using JsonDocument nativeSmaaBoostedJson = JsonDocument.Parse(
-            await File.ReadAllBytesAsync(nativeSmaaBoosted.ConfigPath)
+        using JsonDocument nativeSmaaStrongJson = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(nativeSmaaStrong.ConfigPath)
                 .ConfigureAwait(false));
-        JsonElement nativeSmaaBoostedEffects = FindNamed(
-            nativeSmaaBoostedJson.RootElement.GetProperty("scalingModes"),
+        JsonElement nativeSmaaStrongEffects = FindNamed(
+            nativeSmaaStrongJson.RootElement.GetProperty("scalingModes"),
             MagpiePortableConfigService.NativeClarityModeName)
             .GetProperty("effects");
-        Assert.Equal(3, nativeSmaaBoostedEffects.GetArrayLength());
+        Assert.Equal(1, nativeSmaaStrongEffects.GetArrayLength());
         Assert.Equal(
-            @"SMAA\SMAA_High",
-            nativeSmaaBoostedEffects[0].GetProperty("name").GetString());
+            "Nearest",
+            nativeSmaaStrongEffects[0].GetProperty("name").GetString());
         Assert.Equal(
-            @"FSR\FSR_RCAS",
-            nativeSmaaBoostedEffects[1].GetProperty("name").GetString());
+            1,
+            nativeSmaaStrongEffects[0].GetProperty("scalingType").GetInt32());
         Assert.NearlyEqual(
             1.0,
-            nativeSmaaBoostedEffects[1]
-                .GetProperty("parameters")
-                .GetProperty("sharpness")
+            nativeSmaaStrongEffects[0]
+                .GetProperty("scale")
+                .GetProperty("x")
                 .GetDouble());
-        Assert.Equal(
-            @"FSR\FSR_RCAS",
-            nativeSmaaBoostedEffects[2].GetProperty("name").GetString());
         Assert.NearlyEqual(
-            0.2,
-            nativeSmaaBoostedEffects[2]
-                .GetProperty("parameters")
-                .GetProperty("sharpness")
+            1.0,
+            nativeSmaaStrongEffects[0]
+                .GetProperty("scale")
+                .GetProperty("y")
                 .GetDouble());
+        Assert.False(nativeSmaaStrongEffects[0].TryGetProperty("parameters", out _));
 
         MagpiePortableConfigResult fxaa = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.Lanczos) with
@@ -1906,6 +1969,77 @@ internal static class Program
                 {
                     AntiAliasing = (AntiAliasingMode)999,
                 })).ConfigureAwait(false);
+    }
+
+    private static async Task MagpieStableRuntimeProvisioningAsync()
+    {
+        await using TempDirectory temp = new();
+        string source = Path.Combine(temp.Path, "bundled");
+        string runtimeRoot = Path.Combine(temp.Path, "runtime");
+        Directory.CreateDirectory(source);
+
+        foreach (string relativePath in MagpieRuntimeAssets.RequiredRelativePaths)
+        {
+            string assetPath = Path.Combine(source, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+            await File.WriteAllTextAsync(assetPath, relativePath)
+                .ConfigureAwait(false);
+        }
+
+        foreach (string mutableDirectory in new[] { "cache", "config", "logs" })
+        {
+            string mutablePath = Path.Combine(source, mutableDirectory);
+            Directory.CreateDirectory(mutablePath);
+            await File.WriteAllTextAsync(
+                Path.Combine(mutablePath, "stale.txt"),
+                "must not be provisioned").ConfigureAwait(false);
+        }
+
+        const string runtimeKey = "app-1.0.4-magpie-0.12.1";
+        string prepared = MagpieRuntimeProvisioner.Prepare(
+            source,
+            runtimeRoot,
+            runtimeKey);
+        Assert.Equal(Path.Combine(runtimeRoot, runtimeKey), prepared);
+        Assert.True(MagpieRuntimeAssets.IsComplete(prepared));
+        Assert.False(Directory.Exists(Path.Combine(prepared, "cache")));
+        Assert.False(Directory.Exists(Path.Combine(prepared, "config")));
+        Assert.False(Directory.Exists(Path.Combine(prepared, "logs")));
+
+        string nisRelative = Path.Combine("effects", "NIS", "NIS.hlsl");
+        File.Delete(Path.Combine(source, nisRelative));
+        Assert.Equal(
+            prepared,
+            MagpieRuntimeProvisioner.Prepare(source, runtimeRoot, runtimeKey));
+        Assert.True(File.Exists(Path.Combine(prepared, nisRelative)));
+
+        string staleRuntimeConfig = Path.Combine(prepared, "config", "config.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(staleRuntimeConfig)!);
+        await File.WriteAllTextAsync(staleRuntimeConfig, "stale runtime config")
+            .ConfigureAwait(false);
+        File.Delete(Path.Combine(prepared, nisRelative));
+        await File.WriteAllTextAsync(Path.Combine(source, nisRelative), nisRelative)
+            .ConfigureAwait(false);
+
+        string repaired = MagpieRuntimeProvisioner.Prepare(
+            source,
+            runtimeRoot,
+            runtimeKey);
+        Assert.Equal(prepared, repaired);
+        Assert.True(MagpieRuntimeAssets.IsComplete(repaired));
+        Assert.False(File.Exists(staleRuntimeConfig));
+        Assert.Empty(
+            Directory.EnumerateDirectories(
+                runtimeRoot,
+                $".{runtimeKey}.*",
+                SearchOption.TopDirectoryOnly));
+
+        InvalidDataException missingAsset = Assert.Throws<InvalidDataException>(
+            () => MagpieRuntimeAssets.EnsureComplete(
+                Path.Combine(temp.Path, "missing-runtime")));
+        Assert.Contains("Missing required files", missingAsset.Message);
+        Assert.Throws<ArgumentException>(
+            () => MagpieRuntimeProvisioner.Prepare(source, runtimeRoot, ".."));
     }
 
     private static async Task MagpieConfigTransactionRollbackAsync()
@@ -2003,7 +2137,7 @@ internal static class Program
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => service.WriteAsync(fixture.CreateRequest(ScalingFilter.Fsr) with
             {
-                RcasSharpness = 2.01,
+                RcasSharpness = 1.01,
             })).ConfigureAwait(false);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => service.WriteAsync(fixture.CreateRequest(ScalingFilter.Fsr) with
@@ -5113,6 +5247,27 @@ internal static class Program
             Assert.Throws<InvalidOperationException>(
                 () => _ = harness.Magpie.StartedProcess!.Handle);
         }
+
+        MagpieScalingWindowInspection inactive = exact with
+        {
+            IsActive = false,
+            IsSafeForInput = false,
+            ScalingProcessId = null,
+            MonitorBounds = null,
+            SourceRegion = null,
+            Issues = ["Magpie's scaling window is not active."],
+        };
+        LaunchAcceptanceHarness inactiveHarness =
+            CreateLaunchAcceptanceHarness(client, sourceWindow, inactive);
+        UnsafeScalingAttachmentException inactiveFailure =
+            await Assert.ThrowsAsync<UnsafeScalingAttachmentException>(
+                () => inactiveHarness.Service.AttachExistingAsync(
+                    inactiveHarness.Request)).ConfigureAwait(false);
+        Assert.Contains("scaling window is not active", inactiveFailure.Message);
+        Assert.Contains("Engine log:", inactiveFailure.Message);
+        Assert.DoesNotContain("not owned by the exact dedicated", inactiveFailure.Message);
+        Assert.DoesNotContain("filled a different monitor", inactiveFailure.Message);
+        Assert.DoesNotContain("physical source region", inactiveFailure.Message);
     }
 
     private static async Task LaunchExactAttachmentSucceedsWithoutCleanupAsync()

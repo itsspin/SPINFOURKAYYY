@@ -56,6 +56,7 @@ public sealed class MagpieProcessService : IMagpieProcessService
         string executablePath = ValidateMagpieDirectory(magpieDirectory);
         string fullDirectory = Path.GetDirectoryName(executablePath)
             ?? throw new InvalidOperationException("Magpie.exe has no parent directory.");
+        MagpieRuntimeAssets.EnsureComplete(fullDirectory);
         string configPath = Path.Combine(fullDirectory, "config", "config.json");
         if (!File.Exists(configPath))
         {

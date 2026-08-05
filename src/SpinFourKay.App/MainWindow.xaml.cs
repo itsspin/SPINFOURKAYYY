@@ -199,7 +199,7 @@ public partial class MainWindow : Window, IDisposable
                     StatusTone.Ready,
                     "READY · CHOOSE SETTINGS, THEN LAUNCH",
                     "No running Legends client was found. Choose the UI percentage, "
-                        + "clarity, and anti-aliasing you want, then use Start EverQuest "
+                        + "text detail and compatibility options you want, then use Start EverQuest "
                         + "for me. SpinFOURKAYYY prepares the exact window before the "
                         + "normal launcher opens.");
             }
@@ -395,7 +395,7 @@ public partial class MainWindow : Window, IDisposable
             "AUTO-ATTACHING RUNNING LEGENDS",
             _activeLayoutSession is null
                 ? "A game that was started outside SpinFOURKAYYY is attached at "
-                    + "Native clarity so its unprepared character layout cannot "
+                    + "Native pixels so its unprepared character layout cannot "
                     + "overlap. Choose a larger percentage before using Start "
                     + "EverQuest for me next time."
                 : $"The prepared {FormatUiPercent(recommended.Factor)} character "
@@ -760,9 +760,9 @@ public partial class MainWindow : Window, IDisposable
 
         _clarityReapplyPending = false;
         await RunOperationAsync(
-            "APPLYING CLARITY STRENGTH",
+            "APPLYING TEXT EDGE DETAIL",
             $"Restarting the fullscreen output at "
-                + $"{Math.Round(ClaritySlider.Value):0}% clarity…",
+                + $"{Math.Round(ClaritySlider.Value):0}% edge detail…",
             ReapplyClarityCoreAsync).ConfigureAwait(true);
     }
 
@@ -776,7 +776,7 @@ public partial class MainWindow : Window, IDisposable
         await Task.Yield();
         cancellationToken.ThrowIfCancellationRequested();
         throw new InvalidOperationException(
-            "Clarity and anti-aliasing are applied only during a managed launch. "
+            "Text detail and compatibility anti-aliasing are applied only during a managed launch. "
                 + "Stop scaling, exit EverQuest, choose the new settings, then use "
                 + "Start EverQuest for me.");
     }
@@ -803,6 +803,13 @@ public partial class MainWindow : Window, IDisposable
 
         if (IsLoaded && !_isUpdatingPresetCards)
         {
+            if (SelectedFilter() == ScalingFilter.Nis)
+            {
+                // Readable UI deliberately owns reconstruction and sharpening in
+                // one pass. Never carry a softening AA override into that preset.
+                AntiAliasingComboBox.SelectedIndex = 0;
+            }
+
             string? filterNotice = NormalizeFilterForPreset();
             RefreshDisplayAndPlan();
             if (filterNotice is not null)
@@ -1714,12 +1721,12 @@ public partial class MainWindow : Window, IDisposable
             NoCompatiblePresetText.Visibility = Visibility.Collapsed;
             SpinUiNoticeBorder.Visibility = Visibility.Collapsed;
             ReadabilityEyebrowText.Text = "UI SIZE";
-            ReadabilityHeadingText.Text = "Choose clarity or a larger UI";
+            ReadabilityHeadingText.Text = "Choose native pixels or a larger UI";
             ReadabilityDescriptionText.Text =
-                "Native clarity keeps UI size at 100% and sharpens the visible frame. "
+                "Native pixels keeps the original image unchanged at 100%. "
                 + "Above 100%, UI, visible nameplates, artwork, hitboxes, and clicks "
-                + "scale together. Each player's own layout is fitted automatically "
-                + "before EverQuest opens.";
+                + "scale together through a text-first directional scaler. Each "
+                + "player's own layout is fitted automatically before EverQuest opens.";
 
             ComfortPresetRadio.Visibility = Visibility.Visible;
             BalancedPresetRadio.Visibility = Visibility.Visible;
@@ -1730,17 +1737,17 @@ public partial class MainWindow : Window, IDisposable
 
             ComfortBadgeText.Text = "MAXIMUM READABILITY";
             ComfortTitleText.Text = "Comfort";
-            ComfortDescriptionText.Text = "200% UI · clearest text";
+            ComfortDescriptionText.Text = "200% UI · largest text";
             BalancedBadgeText.Text = "LARGER";
             BalancedTitleText.Text = "Balanced";
-            BalancedDescriptionText.Text = "150% UI · sharper world";
+            BalancedDescriptionText.Text = "150% UI · larger and readable";
             GentleBadgeText.Text = "RECOMMENDED";
             GentleTitleText.Text = "Gentle";
             GentleDescriptionText.Text = "125% UI · most world detail";
             NativeClarityBadgeText.Text = "NO UI RESIZE";
-            NativeClarityTitleText.Text = "Native clarity";
+            NativeClarityTitleText.Text = "Native pixels";
             NativeClarityDescriptionText.Text =
-                "100% UI · sharper visible names";
+                "100% UI · original detail, no sharpening";
             FineScaleTitleText.Text = "Fine UI sizing";
             FineScaleHintText.Text = _isScaledSessionActive
                 || _activeLayoutSession is not null
@@ -1748,20 +1755,20 @@ public partial class MainWindow : Window, IDisposable
                 : "Choose the size before launch; 101%-133% keeps the most world detail.";
 
             ComfortResolutionText.Text = FormatPlan(
-                _resolutionPlanner.CreateCustomPlan(target, 2.0, ScalingFilter.Fsr));
+                _resolutionPlanner.CreateCustomPlan(target, 2.0, ScalingFilter.Nis));
             BalancedResolutionText.Text = FormatPlan(
-                _resolutionPlanner.CreateCustomPlan(target, 1.5, ScalingFilter.Fsr));
+                _resolutionPlanner.CreateCustomPlan(target, 1.5, ScalingFilter.Nis));
             GentleResolutionText.Text = FormatPlan(
-                _resolutionPlanner.CreateCustomPlan(target, 1.25, ScalingFilter.Fsr));
+                _resolutionPlanner.CreateCustomPlan(target, 1.25, ScalingFilter.Nis));
             NativeClarityResolutionText.Text =
-                $"{FormatPixels(target)} native · one-pass RCAS clarity";
+                $"{FormatPixels(target)} native · original pixels";
             _spinUiPlans = [];
             _currentPlan = CreateSelectedPlan(target);
             FineScaleUsageText.Text = _isScaledSessionActive
                 ? "Active — this session is using its fitted personal layout."
                 : _currentPlan.ActualUiScale > 1.005
                     ? "Automatic — personal layouts are fitted before launch."
-                    : "Native clarity — no layout conversion is needed.";
+                    : "Native pixels — no layout conversion is needed.";
             FineScaleValueText.Text =
                 FormatUiPercent(_currentPlan.ActualUiScale);
             FineScaleSourceText.Text =
@@ -1781,7 +1788,7 @@ public partial class MainWindow : Window, IDisposable
     {
         SpinUiResolutionPlan[] basePlans =
             _spinUiResolutionPlanner
-                .GetRecommendedPlans(target, ScalingFilter.Fsr)
+                .GetRecommendedPlans(target, ScalingFilter.Nis)
                 .ToArray();
         int currentCardIndex = SelectedPresetCardIndex();
         int selectedIndex = -1;
@@ -1831,10 +1838,10 @@ public partial class MainWindow : Window, IDisposable
             }
             catch (ArgumentException)
             {
-                requestedFilter = ScalingFilter.Fsr;
+                requestedFilter = ScalingFilter.Nis;
                 _spinUiFilterNotice =
                     "Exact pixels is unavailable for this fractional SpinUI source; "
-                    + "Smooth FSR was selected automatically.";
+                    + "Readable UI was selected automatically.";
                 _isUpdatingPresetCards = true;
                 try
                 {
@@ -1868,7 +1875,7 @@ public partial class MainWindow : Window, IDisposable
                         return _spinUiResolutionPlanner.CreateExactSourcePlan(
                             target,
                             basePlan.SourceResolution,
-                            ScalingFilter.Fsr);
+                            ScalingFilter.Nis);
                     }
                 })
             .ToArray();
@@ -2229,9 +2236,11 @@ public partial class MainWindow : Window, IDisposable
         string? tag = (QualityComboBox.SelectedItem as ComboBoxItem)?.Tag as string;
         return tag switch
         {
+            "Nis" => ScalingFilter.Nis,
+            "Fsr" => ScalingFilter.Fsr,
             "Lanczos" => ScalingFilter.Lanczos,
             "Integer" => ScalingFilter.NearestNeighbor,
-            _ => ScalingFilter.Fsr,
+            _ => ScalingFilter.Nis,
         };
     }
 
@@ -2247,14 +2256,16 @@ public partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Maps the clarity slider (0–200%) to the engine's RCAS strength (0–2).
-    /// Values above 100% add a second sharpening pass.
+    /// Maps the capped edge-detail control directly to the selected scaler. NIS
+    /// applies it inside its one directional scaling pass; optional FSR uses one
+    /// RCAS pass. The UI cannot request the artifact-prone upper 70% of either
+    /// shader's range.
     /// </summary>
     private double SelectedClaritySharpness() =>
         Math.Clamp(
             Math.Round(ClaritySlider.Value) / 100.0,
             0.0,
-            2.0);
+            1.0);
 
     private string? NormalizeFilterForPreset()
     {
@@ -2278,10 +2289,15 @@ public partial class MainWindow : Window, IDisposable
         {
             QualityComboBox.SelectedIndex = normalized switch
             {
-                ScalingFilter.Lanczos => 1,
-                ScalingFilter.NearestNeighbor => 2,
+                ScalingFilter.Fsr => 1,
+                ScalingFilter.Lanczos => 2,
+                ScalingFilter.NearestNeighbor => 3,
                 _ => 0,
             };
+            if (normalized == ScalingFilter.Nis)
+            {
+                AntiAliasingComboBox.SelectedIndex = 0;
+            }
         }
         finally
         {
@@ -2289,10 +2305,10 @@ public partial class MainWindow : Window, IDisposable
         }
 
         return scale.Hundredths == FineUiScale.MinimumHundredths
-            ? "Native clarity uses the dedicated one-pass RCAS path. "
-                + "Adaptive FSR was selected automatically."
+            ? "Native pixels preserves the game's original 1:1 image without "
+                + "sharpening or whole-frame anti-aliasing."
             : "Exact-pixel scaling is limited to the true 2× Comfort preset. "
-                + "Adaptive FSR was selected for this fractional scale.";
+                + "Readable UI was selected for this fractional scale.";
     }
 
     private void RefreshActionAvailability()
@@ -2394,8 +2410,16 @@ public partial class MainWindow : Window, IDisposable
             : "Selects the real render size in exact one-percent steps. Above 100%, "
                 + "the personal layout is fitted automatically before launch.";
         QualityComboBox.IsEnabled = configurationAvailable;
-        AntiAliasingComboBox.IsEnabled = configurationAvailable;
-        ClaritySlider.IsEnabled = configurationAvailable;
+        ScalingFilter selectedQuality = SelectedFilter();
+        bool isUpscaling = _currentPlan is { ActualUiScale: > 1.005 };
+        AntiAliasingComboBox.IsEnabled =
+            configurationAvailable
+            && isUpscaling
+            && selectedQuality != ScalingFilter.Nis;
+        ClaritySlider.IsEnabled =
+            configurationAvailable
+            && isUpscaling
+            && selectedQuality is ScalingFilter.Nis or ScalingFilter.Fsr;
         SpinUiLayoutReadyCheckBox.IsEnabled =
             controlsAvailable
             && UsesStrictSpinUiMode
@@ -2615,7 +2639,7 @@ public partial class MainWindow : Window, IDisposable
             throw new InvalidOperationException(
                 "EverQuest Legends is already running. It was left completely "
                     + "untouched. Exit every Legends client, choose the percentage, "
-                    + "clarity, and anti-aliasing you want, then use Start EverQuest "
+                    + "text detail and compatibility options you want, then use Start EverQuest "
                     + "for me again.");
         }
 
@@ -2795,7 +2819,7 @@ public partial class MainWindow : Window, IDisposable
         return Task.FromException<FourKayLiveScaleResult>(
             new InvalidOperationException(
                 "Live scale changes are disabled. Exit EverQuest, choose the new "
-                    + "percentage, clarity, and anti-aliasing, then start a new "
+                    + "percentage and quality options, then start a new "
                     + "managed session through SpinFOURKAYYY."));
     }
 
@@ -2818,7 +2842,7 @@ public partial class MainWindow : Window, IDisposable
         {
             throw new InvalidOperationException(
                 "Live 1% adjustment requires a generic/custom UI session using "
-                    + "Adaptive FSR or Lanczos.");
+                    + "Readable UI, Smooth FSR, or Lanczos.");
         }
 
         nint foreground = _foregroundWindow.GetForegroundWindowHandle();
@@ -3509,6 +3533,7 @@ public partial class MainWindow : Window, IDisposable
     private static string FilterShortName(ScalingFilter filter) =>
         filter switch
         {
+            ScalingFilter.Nis => "Readable UI",
             ScalingFilter.Fsr => "FSR",
             ScalingFilter.Lanczos => "Lanczos",
             ScalingFilter.NearestNeighbor => "Exact",

@@ -7,7 +7,7 @@ param(
     [string]$Runtime = 'win-x64',
 
     [ValidatePattern('^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$')]
-    [string]$Version = '1.0.3',
+    [string]$Version = '1.0.4',
 
     [switch]$SkipSelfTest
 )
@@ -527,6 +527,29 @@ if (-not (Test-Path -LiteralPath (Join-Path $magpieStageRoot 'Magpie.exe') -Path
 }
 if (-not (Test-Path -LiteralPath (Join-Path $magpieStageRoot 'Microsoft.UI.Xaml.dll') -PathType Leaf)) {
     throw 'The verified Magpie archive did not contain Microsoft.UI.Xaml.dll at its expected path.'
+}
+
+foreach ($requiredMagpieAsset in @(
+    'resources.pri',
+    'effects\FSR\FSR_EASU.hlsl',
+    'effects\FSR\FSR_RCAS.hlsl',
+    'effects\NIS\NIS.hlsl',
+    'effects\NIS\NIS_Scaler.hlsli',
+    'effects\NIS\Coef_Scale.dds',
+    'effects\NIS\Coef_USM.dds',
+    'effects\Lanczos.hlsl',
+    'effects\Nearest.hlsl',
+    'effects\FXAA\FXAA.hlsli',
+    'effects\FXAA\FXAA_High.hlsl',
+    'effects\SMAA\SMAA.hlsli',
+    'effects\SMAA\SMAA_High.hlsl',
+    'effects\SMAA\AreaTex.dds',
+    'effects\SMAA\SearchTex.dds'
+)) {
+    $requiredMagpiePath = Join-Path $magpieStageRoot $requiredMagpieAsset
+    if (-not (Test-Path -LiteralPath $requiredMagpiePath -PathType Leaf)) {
+        throw "The verified Magpie archive is missing required runtime asset '$requiredMagpieAsset'."
+    }
 }
 
 Copy-Item -LiteralPath (Join-Path $magpieSourceRoot 'LICENSE') `

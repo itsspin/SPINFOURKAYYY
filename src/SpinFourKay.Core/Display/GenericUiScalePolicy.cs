@@ -30,7 +30,7 @@ public static class GenericUiScalePolicy
         return scale.Hundredths == FineUiScale.MinimumHundredths
                 || (requestedFilter == ScalingFilter.NearestNeighbor
                     && scale.Hundredths != 200)
-            ? ScalingFilter.Fsr
+            ? ScalingFilter.Nis
             : requestedFilter;
     }
 }

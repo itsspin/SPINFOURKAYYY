@@ -80,7 +80,7 @@ public sealed class SpinUiResolutionPlanner
 
     public IReadOnlyList<SpinUiResolutionPlan> GetRecommendedPlans(
         PixelSize targetResolution,
-        ScalingFilter filter = ScalingFilter.Fsr)
+        ScalingFilter filter = ScalingFilter.Nis)
     {
         ValidateFilter(filter);
 
@@ -99,7 +99,7 @@ public sealed class SpinUiResolutionPlanner
     public SpinUiResolutionPlan CreateExactSourcePlan(
         PixelSize targetResolution,
         PixelSize sourceResolution,
-        ScalingFilter filter = ScalingFilter.Fsr)
+        ScalingFilter filter = ScalingFilter.Nis)
     {
         ValidateFilter(filter);
         if (!IsValidatedSource(sourceResolution))

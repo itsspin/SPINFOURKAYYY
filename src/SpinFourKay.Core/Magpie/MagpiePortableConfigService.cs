@@ -12,8 +12,10 @@ namespace SpinFourKay.Core.Magpie;
 public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
 {
     public const string SmoothModeName = "SpinFOURKAYYY - Smooth FSR";
+    public const string ReadableModeName =
+        "SpinFOURKAYYY - Readable UI";
     public const string NativeClarityModeName =
-        "SpinFOURKAYYY - Native Clarity";
+        "SpinFOURKAYYY - Native Pixels";
     public const string PixelCrispModeName = "SpinFOURKAYYY - Pixel Crisp";
     public const string LanczosModeName = "SpinFOURKAYYY - Lanczos";
 
@@ -51,10 +53,14 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
             scalingModes,
             SmoothModeName,
             CreateFsrMode(request.RcasSharpness, request.AntiAliasing));
+        int readableIndex = UpsertNamedObject(
+            scalingModes,
+            ReadableModeName,
+            CreateNisMode(request.RcasSharpness));
         int nativeClarityIndex = UpsertNamedObject(
             scalingModes,
             NativeClarityModeName,
-            CreateNativeClarityMode(request.RcasSharpness, request.AntiAliasing));
+            CreateNativePixelsMode());
         int pixelCrispIndex = UpsertNamedObject(
             scalingModes,
             PixelCrispModeName,
@@ -74,6 +80,7 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
             ? nativeClarityIndex
             : request.Filter switch
             {
+                ScalingFilter.Nis => readableIndex,
                 ScalingFilter.Fsr => smoothIndex,
                 ScalingFilter.NearestNeighbor => pixelCrispIndex,
                 ScalingFilter.Lanczos => lanczosIndex,
@@ -320,7 +327,7 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
             },
         ];
         AppendAntiAliasingEffect(effects, antiAliasing);
-        AppendRcasSharpeningPasses(effects, rcasSharpness);
+        AppendRcasSharpeningPass(effects, rcasSharpness);
         return new JsonObject
         {
             ["name"] = SmoothModeName,
@@ -328,17 +335,51 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         };
     }
 
-    private static JsonObject CreateNativeClarityMode(
-        double rcasSharpness,
-        AntiAliasingMode antiAliasing)
+    /// <summary>
+    /// NIS combines directional reconstruction and adaptive sharpening in one
+    /// scaling pass. Do not append RCAS, SMAA, or FXAA here: those whole-frame
+    /// post-processes can turn small glyph strokes into blur, halos, and grain.
+    /// </summary>
+    private static JsonObject CreateNisMode(double sharpness)
     {
-        JsonArray effects = [];
-        AppendAntiAliasingEffect(effects, antiAliasing);
-        AppendRcasSharpeningPasses(effects, rcasSharpness);
+        return new JsonObject
+        {
+            ["name"] = ReadableModeName,
+            ["effects"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = @"NIS\NIS",
+                    ["scalingType"] = 1,
+                    ["scale"] = CreateScale(),
+                    ["parameters"] = new JsonObject
+                    {
+                        ["sharpness"] = sharpness,
+                    },
+                },
+            },
+        };
+    }
+
+    /// <summary>
+    /// At 1:1, the original game pixels are already the highest-fidelity source.
+    /// A nearest 1:1 pass gives Magpie a valid fullscreen scaling effect without
+    /// altering glyph edges or inventing a misleading "native sharpening" pass.
+    /// </summary>
+    private static JsonObject CreateNativePixelsMode()
+    {
         return new JsonObject
         {
             ["name"] = NativeClarityModeName,
-            ["effects"] = effects,
+            ["effects"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "Nearest",
+                    ["scalingType"] = 1,
+                    ["scale"] = CreateScale(),
+                },
+            },
         };
     }
 
@@ -362,38 +403,19 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         }
     }
 
-    /// <summary>
-    /// Sharpness up to 1.0 is one RCAS pass. Above 1.0, the remainder becomes a
-    /// second RCAS pass so the clarity treatment is visibly stronger without any
-    /// single pass exceeding the shader's supported range.
-    /// </summary>
-    private static void AppendRcasSharpeningPasses(
+    private static void AppendRcasSharpeningPass(
         JsonArray effects,
         double rcasSharpness)
     {
-        double firstPass = Math.Min(rcasSharpness, 1.0);
         effects.Add(
             new JsonObject
             {
                 ["name"] = @"FSR\FSR_RCAS",
                 ["parameters"] = new JsonObject
                 {
-                    ["sharpness"] = firstPass,
+                    ["sharpness"] = rcasSharpness,
                 },
             });
-        double secondPass = Math.Min(rcasSharpness - firstPass, 1.0);
-        if (secondPass > 0)
-        {
-            effects.Add(
-                new JsonObject
-                {
-                    ["name"] = @"FSR\FSR_RCAS",
-                    ["parameters"] = new JsonObject
-                    {
-                        ["sharpness"] = secondPass,
-                    },
-                });
-        }
     }
 
     private static JsonObject CreateSingleEffectMode(
@@ -632,13 +654,12 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
 
         if (!double.IsFinite(request.RcasSharpness)
             || request.RcasSharpness < 0
-            || request.RcasSharpness > 2)
+            || request.RcasSharpness > 1)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(request),
                 request.RcasSharpness,
-                "RCAS sharpness must be between 0 and 2; values above 1 add a "
-                    + "second sharpening pass.");
+                "Edge-detail strength must be between 0 and 1.");
         }
 
         if (!Enum.IsDefined(request.AntiAliasing))
@@ -647,14 +668,6 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
                 nameof(request),
                 request.AntiAliasing,
                 "The anti-aliasing mode is not supported.");
-        }
-
-        if (request.NativeClarityOnly
-            && request.Filter != ScalingFilter.Fsr)
-        {
-            throw new ArgumentException(
-                "Native clarity requires the FSR/RCAS quality path.",
-                nameof(request));
         }
 
         if (request.MaximumFrameRate is { } maximumFrameRate

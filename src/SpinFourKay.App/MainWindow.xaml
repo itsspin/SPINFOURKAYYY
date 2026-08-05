@@ -144,7 +144,7 @@
                                    FontSize="13"
                                    Foreground="{StaticResource MutedTextBrush}"
                                    TextWrapping="Wrap"
-                                   Text="Choose Native clarity to keep the UI at 100%, or a larger size for easier UI and overhead-name reading. SpinFOURKAYYY fits each player's own layout automatically before launch." />
+                                   Text="Choose Native pixels to keep the original 100% image, or a larger size for easier UI and overhead-name reading. SpinFOURKAYYY fits each player's own layout automatically before launch." />
                         <TextBlock Margin="0,3,0,0"
                                    FontSize="11"
                                    Foreground="{StaticResource MutedTextBrush}"
@@ -384,7 +384,7 @@
                                     <TextBlock x:Name="NativeClarityTitleText"
                                                FontSize="15"
                                                FontWeight="Bold"
-                                               Text="Native clarity" />
+                                               Text="Native pixels" />
                                     <TextBlock x:Name="NativeClarityBadgeText"
                                                Margin="7,2,0,0"
                                                FontSize="9"
@@ -402,7 +402,7 @@
                                            FontFamily="Cascadia Mono, Consolas"
                                            FontSize="10"
                                            Foreground="{StaticResource CyanBrush}"
-                                           Text="3840×2160 · native RCAS clarity" />
+                                           Text="3840×2160 · original pixels" />
                             </StackPanel>
                         </RadioButton>
                     </UniformGrid>
@@ -462,7 +462,7 @@
                               Margin="0,9,0,0"
                               IsExpanded="False"
                               AutomationProperties.Name="Advanced setup"
-                              AutomationProperties.HelpText="Shows game folder, display, optional SpinUI, quality, clarity, and technical details."
+                              AutomationProperties.HelpText="Shows game folder, display, optional SpinUI, quality, text detail, and technical details."
                               Style="{StaticResource AdvancedExpanderStyle}">
                         <Expander.Header>
                             <StackPanel>
@@ -472,7 +472,7 @@
                                 <TextBlock Margin="0,1,0,0"
                                            FontSize="11"
                                            Foreground="{StaticResource MutedTextBrush}"
-                                           Text="Game folder, display, optional SpinUI, quality, clarity, and technical details" />
+                                           Text="Game folder, display, optional SpinUI, quality, text detail, and technical details" />
                             </StackPanel>
                         </Expander.Header>
                         <StackPanel Margin="0,9,0,0">
@@ -648,8 +648,10 @@
                                               AutomationProperties.Name="Frame scaling filter"
                                               SelectionChanged="QualityComboBox_SelectionChanged">
                                         <ComboBoxItem IsSelected="True"
-                                                      Tag="Fsr"
-                                                      Content="Adaptive FSR · recommended" />
+                                                      Tag="Nis"
+                                                      Content="Readable UI · recommended" />
+                                        <ComboBoxItem Tag="Fsr"
+                                                      Content="Smooth world · FSR" />
                                         <ComboBoxItem Tag="Lanczos"
                                                       Content="Lanczos · lighter GPU use" />
                                         <ComboBoxItem Tag="Integer"
@@ -660,32 +662,32 @@
                                     <Grid Margin="0,0,0,4">
                                         <TextBlock FontSize="12"
                                                    FontWeight="SemiBold"
-                                                   Text="Clarity strength" />
+                                                   Text="Text edge detail" />
                                         <TextBlock x:Name="ClarityValueText"
                                                    HorizontalAlignment="Right"
                                                    FontFamily="Cascadia Mono, Consolas"
                                                    FontSize="12"
                                                    FontWeight="Bold"
                                                    Foreground="{StaticResource CyanBrush}"
-                                                   Text="110%" />
+                                                   Text="20%" />
                                     </Grid>
                                     <Slider x:Name="ClaritySlider"
                                             Minimum="0"
-                                            Maximum="200"
-                                            Value="110"
+                                            Maximum="30"
+                                            Value="20"
                                             SmallChange="5"
-                                            LargeChange="25"
+                                            LargeChange="10"
                                             TickFrequency="5"
                                             IsSnapToTickEnabled="True"
                                             AutoToolTipPlacement="TopLeft"
-                                            AutomationProperties.Name="Clarity sharpening strength"
-                                            AutomationProperties.HelpText="Zero disables sharpening; values above one hundred percent add a second sharpening pass. Choose before launching EverQuest."
+                                            AutomationProperties.Name="Text edge detail strength"
+                                            AutomationProperties.HelpText="Controls the bounded edge detail inside the single-pass Readable UI scaler. Twenty percent is recommended; the safe maximum is thirty percent. Choose before launching EverQuest."
                                             ValueChanged="ClaritySlider_ValueChanged" />
                                     <TextBlock Margin="0,4,0,0"
                                                FontSize="11"
                                                Foreground="{StaticResource MutedTextBrush}"
                                                TextWrapping="Wrap"
-                                               Text="Sharpens the whole visible frame. Above 100% adds a second sharpening pass; choose before launch." />
+                                               Text="Readable UI reconstructs and sharpens edges together in one directional pass. 20% is recommended; the control is capped at 30% to protect small lettering from halos and grain." />
                                 </StackPanel>
                             </Grid>
 
@@ -717,7 +719,7 @@
                                            FontSize="11"
                                            Foreground="{StaticResource MutedTextBrush}"
                                            TextWrapping="Wrap"
-                                           Text="Optional whole-frame edge smoothing. SMAA keeps more detail; FXAA is lighter but softer. Choose Off if small UI text looks blurred." />
+                                           Text="Only used by compatibility filters. Readable UI automatically leaves whole-frame smoothing off so it cannot blur small lettering." />
                             </Grid>
 
                             <Border x:Name="SpinUiNoticeBorder"

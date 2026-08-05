@@ -26,24 +26,27 @@ public sealed record MagpieProfileRequest
 
     public string? LauncherPath { get; init; }
 
-    public ScalingFilter Filter { get; init; } = ScalingFilter.Fsr;
+    public ScalingFilter Filter { get; init; } = ScalingFilter.Nis;
 
     /// <summary>
-    /// Clarity strength from 0 to 2. Values up to 1 map to one RCAS pass;
-    /// values above 1 add a second RCAS pass with the remainder.
+    /// Bounded edge-detail strength from 0 to 1. The readable NIS path uses this
+    /// inside its single directional scaling pass; the optional FSR path maps it
+    /// to one RCAS pass. Multiple sharpening passes are intentionally avoided.
     /// </summary>
-    public double RcasSharpness { get; init; } = 1.0;
+    public double RcasSharpness { get; init; } = 0.20;
 
     /// <summary>
-    /// Optional whole-frame post-process edge smoothing. This is applied after
-    /// the scaling pass and before RCAS sharpening.
+    /// Optional whole-frame post-process edge smoothing for compatibility
+    /// filters. The readable NIS and native-pixel paths always protect UI text
+    /// by ignoring this post-process.
     /// </summary>
     public AntiAliasingMode AntiAliasing { get; init; } = AntiAliasingMode.Off;
 
     /// <summary>
-    /// Uses the RCAS clarity treatment without resizing the captured frame.
-    /// This is reserved for a source whose client area exactly matches the
-    /// physical target display.
+    /// Uses an exact 1:1 nearest pass without resizing or sharpening the captured
+    /// frame. This is reserved for a source whose client area exactly matches the
+    /// physical target display. The legacy name is retained for journal/API
+    /// compatibility.
     /// </summary>
     public bool NativeClarityOnly { get; init; }
 
