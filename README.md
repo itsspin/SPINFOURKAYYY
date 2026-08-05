@@ -54,17 +54,18 @@ On first use for each app version, the bundled engine is validated and copied to
 
 The percentage and quality controls are locked for the active session because changing them safely requires a fresh prepared source window. Exit EverQuest, choose new settings, and launch again; the matching layout profile is generated automatically. When scaling stops, EverQuest remains in its ordinary prepared window. When the game exits, layout changes are captured and the native layout transaction is completed.
 
-## Readable UI and text edge detail
+## Readable UI and fine edge detail
 
-**Readable UI** is the recommended and default enlarged mode. It uses NVIDIA Image Scaling's directional reconstruction and adaptive sharpening together in one GPU-vendor-neutral Magpie pass. It never stacks RCAS, SMAA, or FXAA afterward, because those extra whole-frame passes can blur small strokes or turn them into halos and grain.
+**Readable UI** is the recommended and default enlarged mode. It automatically chooses the least destructive single reconstruction pass for the actual enlargement:
 
-The **Text edge detail** slider is deliberately limited to **0–30%** and defaults to **20%**:
+- At **101–119%**, it uses Lanczos reconstruction with strong anti-ringing and no sharpening. Mild scaling does not provide enough new samples to justify sharpening, which otherwise emphasizes terrain texture and grain.
+- At **120–200%**, it uses NVIDIA Image Scaling's directional reconstruction and bounded adaptive sharpening in one GPU-vendor-neutral Magpie pass.
 
-- **0%** uses NIS reconstruction without added adaptive sharpening.
-- **20%** is the recommended balance for small lettering and UI artwork.
-- **30%** is the guarded maximum; stronger values are intentionally unavailable.
+Readable UI never stacks RCAS, SMAA, or FXAA afterward, because those extra whole-frame passes can blur small strokes or turn them into halos and grain.
 
-The control is disabled for Native pixels, Lanczos, and Exact pixels. The optional **Smooth world · FSR** compatibility filter maps the same bounded value to its one RCAS pass. No mode uses two sharpening passes. Choose the setting before launching; it remains locked during the session so SpinFOURKAYYY never has to stop and re-attach Magpie to a running EverQuest window.
+The **Fine edge detail** slider is limited to **0–20%** and defaults to **10%**. It is disabled for Readable UI at 101–119%, where sharpening is intentionally absent, and for Native pixels, Lanczos, and Exact pixels. At 120% and above, **10%** is the recommended NIS value and **20%** is the guarded maximum. The optional **Smooth world · FSR** compatibility filter maps the same bounded value to its one RCAS pass. No mode uses two sharpening passes. Choose the setting before launching; it remains locked during the session so SpinFOURKAYYY never has to stop and re-attach Magpie to a running EverQuest window.
+
+Distant overhead names can begin as only a few rendered glyph pixels. A scaler can preserve those samples but cannot invent strokes that Legends never rendered. If 110% still leaves distant names physically too small, use **120–125%** rather than stronger edge detail; the automatic layout fitting keeps each player's own UI arrangement within the chosen source frame.
 
 ## Optional anti-aliasing
 
@@ -95,7 +96,7 @@ Strict SpinUI mode offers only validated source resolutions and requires the use
 ## Filters and performance
 
 - **Native pixels** uses an exact 1:1 nearest pass with no sharpening at 100% source size.
-- **Readable UI** is the default fractional enlargement path: one NIS directional scaling pass at a guarded detail strength.
+- **Readable UI** is the default fractional enlargement path: clean anti-ringing Lanczos at 101–119%, then one guarded NIS directional pass at 120–200%.
 - **Smooth world · FSR** remains an optional compatibility path with one bounded RCAS pass.
 - **Lanczos** is a lighter fallback for enlarged modes.
 - **Exact pixels** is intended only for a true 2× Comfort plan.

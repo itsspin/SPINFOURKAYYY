@@ -33,12 +33,19 @@ public sealed record MagpieProfileRequest
     /// inside its single directional scaling pass; the optional FSR path maps it
     /// to one RCAS pass. Multiple sharpening passes are intentionally avoided.
     /// </summary>
-    public double RcasSharpness { get; init; } = 0.20;
+    public double RcasSharpness { get; init; } = 0.10;
+
+    /// <summary>
+    /// Physical destination-to-source scale for this session. Readable UI uses
+    /// a clean anti-ringing reconstruction below 1.20x and its directional NIS
+    /// path at 1.20x and above.
+    /// </summary>
+    public double UiScaleFactor { get; init; } = 1.25;
 
     /// <summary>
     /// Optional whole-frame post-process edge smoothing for compatibility
-    /// filters. The readable NIS and native-pixel paths always protect UI text
-    /// by ignoring this post-process.
+    /// filters. The automatic Readable UI and native-pixel paths always protect
+    /// UI text by ignoring this post-process.
     /// </summary>
     public AntiAliasingMode AntiAliasing { get; init; } = AntiAliasingMode.Off;
 
