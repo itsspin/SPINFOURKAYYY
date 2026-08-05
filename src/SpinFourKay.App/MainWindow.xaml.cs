@@ -2238,6 +2238,17 @@ public partial class MainWindow : Window, IDisposable
         };
     }
 
+    private AntiAliasingMode SelectedAntiAliasing()
+    {
+        string? tag = (AntiAliasingComboBox.SelectedItem as ComboBoxItem)?.Tag as string;
+        return tag switch
+        {
+            "Fxaa" => AntiAliasingMode.Fxaa,
+            "Smaa" => AntiAliasingMode.Smaa,
+            _ => AntiAliasingMode.Off,
+        };
+    }
+
     /// <summary>
     /// Maps the clarity slider (0–200%) to the engine's RCAS strength (0–2).
     /// Values above 100% add a second sharpening pass.
@@ -2407,6 +2418,7 @@ public partial class MainWindow : Window, IDisposable
             : "Selects the real render size in exact one-percent steps. Above 100%, "
                 + "the personal layout is fitted automatically before launch.";
         QualityComboBox.IsEnabled = configurationAvailable;
+        AntiAliasingComboBox.IsEnabled = configurationAvailable;
         ClaritySlider.IsEnabled = controlsAvailable;
         SpinUiLayoutReadyCheckBox.IsEnabled =
             controlsAvailable
@@ -2842,6 +2854,7 @@ public partial class MainWindow : Window, IDisposable
                 WindowTimeout = TimeSpan.FromSeconds(45),
                 ScalingTimeout = TimeSpan.FromSeconds(20),
                 RcasSharpness = SelectedClaritySharpness(),
+                AntiAliasing = SelectedAntiAliasing(),
             },
             cancellationToken).ConfigureAwait(true);
 

@@ -7,6 +7,13 @@ public sealed record MagpieGraphicsAdapter(
     uint VendorId = 0,
     uint DeviceId = 0);
 
+public enum AntiAliasingMode
+{
+    Off,
+    Fxaa,
+    Smaa,
+}
+
 public sealed record MagpieProfileRequest
 {
     public required string MagpieDirectory { get; init; }
@@ -26,6 +33,12 @@ public sealed record MagpieProfileRequest
     /// values above 1 add a second RCAS pass with the remainder.
     /// </summary>
     public double RcasSharpness { get; init; } = 1.0;
+
+    /// <summary>
+    /// Optional whole-frame post-process edge smoothing. This is applied after
+    /// the scaling pass and before RCAS sharpening.
+    /// </summary>
+    public AntiAliasingMode AntiAliasing { get; init; } = AntiAliasingMode.Off;
 
     /// <summary>
     /// Uses the RCAS clarity treatment without resizing the captured frame.

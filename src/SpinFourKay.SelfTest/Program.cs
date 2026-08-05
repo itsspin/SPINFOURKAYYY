@@ -1802,6 +1802,70 @@ internal static class Program
         Assert.Equal(
             2,
             boostedClarity.GetProperty("effects").GetArrayLength());
+
+        MagpiePortableConfigResult smaa = await service.WriteAsync(
+            fixture.CreateRequest(ScalingFilter.Fsr) with
+            {
+                AntiAliasing = AntiAliasingMode.Smaa,
+                RcasSharpness = 0.75,
+            }).ConfigureAwait(false);
+        using JsonDocument smaaJson = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(smaa.ConfigPath).ConfigureAwait(false));
+        JsonElement smaaModes = smaaJson.RootElement.GetProperty("scalingModes");
+        JsonElement smaaFsrEffects = FindNamed(
+            smaaModes,
+            MagpiePortableConfigService.SmoothModeName).GetProperty("effects");
+        Assert.Equal(3, smaaFsrEffects.GetArrayLength());
+        Assert.Equal(
+            @"FSR\FSR_EASU",
+            smaaFsrEffects[0].GetProperty("name").GetString());
+        Assert.Equal(
+            @"SMAA\SMAA_High",
+            smaaFsrEffects[1].GetProperty("name").GetString());
+        Assert.Equal(
+            @"FSR\FSR_RCAS",
+            smaaFsrEffects[2].GetProperty("name").GetString());
+        JsonElement smaaNativeEffects = FindNamed(
+            smaaModes,
+            MagpiePortableConfigService.NativeClarityModeName).GetProperty("effects");
+        Assert.Equal(2, smaaNativeEffects.GetArrayLength());
+        Assert.Equal(
+            @"SMAA\SMAA_High",
+            smaaNativeEffects[0].GetProperty("name").GetString());
+        Assert.Equal(
+            @"FSR\FSR_RCAS",
+            smaaNativeEffects[1].GetProperty("name").GetString());
+        JsonElement smaaCrispEffects = FindNamed(
+            smaaModes,
+            MagpiePortableConfigService.PixelCrispModeName).GetProperty("effects");
+        Assert.Equal(2, smaaCrispEffects.GetArrayLength());
+        Assert.Equal("Nearest", smaaCrispEffects[0].GetProperty("name").GetString());
+        Assert.Equal(
+            @"SMAA\SMAA_High",
+            smaaCrispEffects[1].GetProperty("name").GetString());
+
+        MagpiePortableConfigResult fxaa = await service.WriteAsync(
+            fixture.CreateRequest(ScalingFilter.Lanczos) with
+            {
+                AntiAliasing = AntiAliasingMode.Fxaa,
+            }).ConfigureAwait(false);
+        using JsonDocument fxaaJson = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(fxaa.ConfigPath).ConfigureAwait(false));
+        JsonElement fxaaLanczosEffects = FindNamed(
+            fxaaJson.RootElement.GetProperty("scalingModes"),
+            MagpiePortableConfigService.LanczosModeName).GetProperty("effects");
+        Assert.Equal(2, fxaaLanczosEffects.GetArrayLength());
+        Assert.Equal("Lanczos", fxaaLanczosEffects[0].GetProperty("name").GetString());
+        Assert.Equal(
+            @"FXAA\FXAA_High",
+            fxaaLanczosEffects[1].GetProperty("name").GetString());
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => service.WriteAsync(
+                fixture.CreateRequest(ScalingFilter.Fsr) with
+                {
+                    AntiAliasing = (AntiAliasingMode)999,
+                })).ConfigureAwait(false);
     }
 
     private static async Task MagpieConfigTransactionRollbackAsync()

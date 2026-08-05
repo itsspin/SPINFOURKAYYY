@@ -25,6 +25,8 @@ public sealed record FourKayLaunchRequest
 
     public double RcasSharpness { get; init; } = 1.0;
 
+    public AntiAliasingMode AntiAliasing { get; init; } = AntiAliasingMode.Off;
+
     public double? MaximumFrameRate { get; init; }
 
     public MagpieGraphicsAdapter GraphicsAdapter { get; init; } = new();
@@ -70,6 +72,8 @@ public sealed record FourKayAttachRequest
     public TimeSpan ScalingTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
     public double RcasSharpness { get; init; } = 1.0;
+
+    public AntiAliasingMode AntiAliasing { get; init; } = AntiAliasingMode.Off;
 
     public double? MaximumFrameRate { get; init; }
 
@@ -474,6 +478,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 state.ResolutionPlan.Filter,
                 request.LauncherPath,
                 request.RcasSharpness,
+                request.AntiAliasing,
                 request.MaximumFrameRate,
                 request.GraphicsAdapter,
                 request.DisableDirectFlip,
@@ -651,6 +656,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                         effectiveFilter,
                         launcherPath: null,
                         request.RcasSharpness,
+                        request.AntiAliasing,
                         request.MaximumFrameRate,
                         request.GraphicsAdapter,
                         request.DisableDirectFlip,
@@ -1170,6 +1176,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         ScalingFilter filter,
         string? launcherPath,
         double rcasSharpness,
+        AntiAliasingMode antiAliasing,
         double? maximumFrameRate,
         MagpieGraphicsAdapter graphicsAdapter,
         bool disableDirectFlip,
@@ -1194,6 +1201,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 LauncherPath = launcherPath,
                 Filter = filter,
                 RcasSharpness = rcasSharpness,
+                AntiAliasing = antiAliasing,
                 NativeClarityOnly =
                     filter == ScalingFilter.Fsr
                     && placement.RequestedClientSize
