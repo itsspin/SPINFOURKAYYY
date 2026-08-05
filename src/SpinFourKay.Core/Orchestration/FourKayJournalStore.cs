@@ -101,6 +101,13 @@ public sealed class FourKayJournalStore : IFourKayJournalStore
                     + "the existing session before choosing a different UI mode.");
         }
 
+        if (persisted.KeepPreparedConfiguration
+            != state.KeepPreparedConfiguration)
+        {
+            throw new InvalidOperationException(
+                "The recovery journal's prepared-configuration policy is immutable.");
+        }
+
         await WriteAsync(state, cancellationToken).ConfigureAwait(false);
         return state;
     }

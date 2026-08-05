@@ -98,7 +98,9 @@ public sealed class FourKayPreparationService : IFourKayPreparationService
         }
 
         IReadOnlyList<string> protectedPlayerFiles =
-            EverQuestPlayerStateLocator.FindExistingFiles(eqDirectory);
+            request.KeepPreparedConfiguration
+                ? [eqClientIniPath]
+                : EverQuestPlayerStateLocator.FindExistingFiles(eqDirectory);
         BackupManifest backup = await _backupService.CreateAsync(
             protectedPlayerFiles,
             Path.Combine(stateDirectory, "backups"),
@@ -123,11 +125,15 @@ public sealed class FourKayPreparationService : IFourKayPreparationService
             TargetMonitorBounds = targetMonitor.Bounds,
             OriginalIniSha256 = iniBackup.Sha256,
             AppliedIniSha256 = null,
-            PlayerStateProtectionVersion =
-                EverQuestPlayerStateLocator.CurrentProtectionVersion,
-            ProtectedPlayerFiles = protectedPlayerFiles,
+            PlayerStateProtectionVersion = request.KeepPreparedConfiguration
+                ? 0
+                : EverQuestPlayerStateLocator.CurrentProtectionVersion,
+            ProtectedPlayerFiles = request.KeepPreparedConfiguration
+                ? []
+                : protectedPlayerFiles,
             ChatFontSizeIncrease = request.ChatFontSizeIncrease,
             UiCompatibilityMode = request.UiCompatibilityMode,
+            KeepPreparedConfiguration = request.KeepPreparedConfiguration,
         };
         state = await _journalStore.SaveNewAsync(stateDirectory, state, cancellationToken)
             .ConfigureAwait(false);
@@ -170,7 +176,9 @@ public sealed class FourKayPreparationService : IFourKayPreparationService
 
             state = state with
             {
-                Status = FourKayJournalStatus.Prepared,
+                Status = request.KeepPreparedConfiguration
+                    ? FourKayJournalStatus.Committed
+                    : FourKayJournalStatus.Prepared,
                 AppliedIniSha256 = appliedHash,
                 AppliedChatFontSize = applyResult.AppliedChatFontSize,
                 Warnings = applyResult.Warnings,
@@ -316,7 +324,8 @@ public sealed class FourKayPreparationService : IFourKayPreparationService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(state);
-        if (state.Status is FourKayJournalStatus.Restored
+        if (state.Status is FourKayJournalStatus.Committed
+            or FourKayJournalStatus.Restored
             or FourKayJournalStatus.RestoredWithDpiConflict)
         {
             return new FourKayRestoreResult(

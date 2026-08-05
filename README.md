@@ -13,7 +13,7 @@ For sizes above 100%, SpinFOURKAYYY automatically fits every player's own `UI_<c
 3. Click **Start EverQuest for me**. The normal Legends launcher opens; patch and sign in normally.
 4. Keep SpinFOURKAYYY open while playing. When EverQuest exits, the app saves layout changes for that percentage and returns the live layout files to native geometry automatically.
 
-At 100%, SpinFOURKAYYY can also attach to an already-running client because no layout conversion is needed. Sizes above 100% must be chosen before launch so the correct personal layout profile is present on the first frame. **Clarity strength** can still be adjusted while playing.
+SpinFOURKAYYY never resizes or attaches to an already-running client. Choose the percentage, clarity strength, and anti-aliasing first, then launch through the app. This guarantees that EverQuest starts in a normal (not maximized or fullscreen) window at the exact physical source size Magpie will validate.
 
 No character-profile selection is required. **Current/default/custom UI** remains selected unless the user explicitly chooses the optional strict SpinUI workflow.
 
@@ -23,7 +23,7 @@ The automatic layout transaction is deliberately narrow and recoverable:
 
 - Only top-level character layout files whose names match EverQuest's `UI_*.ini` convention are converted. Generic `Width` and `Height` geometry is scaled; percent-based anchors, UI skin names, chat settings, unknown sections, line endings, and legacy bytes are preserved.
 - Character settings files are never opened by this flow. Macros, hotbuttons, socials, spell sets, keybinds, userdata, and UI asset folders remain untouched.
-- The minimum `eqclient.ini` video keys needed to launch at the selected source size are changed temporarily. Their original values are journaled before the write and restored after EverQuest exits, while unrelated settings saved during play are preserved.
+- Only the minimum `eqclient.ini` video keys needed to launch windowed at the selected source size are updated. The selected launch resolution remains saved for the next managed launch; unrelated client settings are preserved. A verified pre-write backup is retained, but character files are never included in that configuration backup.
 - Verified native snapshots and scale-specific profiles live under `%LOCALAPPDATA%\SpinFOURKAYYY\layout-profiles`, not in the game folder. An interrupted prepare rolls back exactly; an interrupted exit restore resumes safely the next time the app opens.
 - If a layout changed during play, its scaled version is saved for that percentage and an inverse-converted native version becomes the normal live file. If it did not change, the exact original bytes are restored.
 
@@ -50,7 +50,7 @@ A true native-resolution 3D world with independently larger UI/nameplates would 
 
 Before an above-100% session, SpinFOURKAYYY selects or creates a verified layout profile for the exact native-to-source resolution pair and temporarily prepares the game's windowed launch size. It then opens the normal launcher, binds to the exact resulting EverQuest process and window, and scales that source window to borderless fullscreen with the bundled Magpie engine.
 
-The percentage selector is locked for the active session because a different source size needs a matching layout profile. Exit EverQuest, choose another percentage, and launch again; the new profile is generated automatically. When scaling stops, the exact previous window geometry is restored. When the game exits, layout changes are captured and the native layout transaction is completed.
+The percentage, clarity, and anti-aliasing controls are locked for the active session because changing them safely requires a fresh prepared source window. Exit EverQuest, choose new settings, and launch again; the matching layout profile is generated automatically. When scaling stops, EverQuest remains in its ordinary prepared window. When the game exits, layout changes are captured and the native layout transaction is completed.
 
 ## Adjustable clarity
 
@@ -60,7 +60,7 @@ The **Clarity strength** slider (0–200%, default 110%) controls the RCAS sharp
 - **1–100%** maps to one RCAS pass of increasing strength.
 - **101–200%** adds a second RCAS pass carrying the remainder, for a visibly stronger clarity treatment than any single pass can produce.
 
-Clarity changes apply to a live session automatically: the engine restarts its fullscreen output with the new strength in a few seconds, without touching the game.
+Choose clarity before launching. It remains locked during the session so SpinFOURKAYYY never has to stop and re-attach Magpie to a running EverQuest window.
 
 ## Optional anti-aliasing
 
