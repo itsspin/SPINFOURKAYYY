@@ -1,6 +1,6 @@
 # SpinFOURKAYYY
 
-SpinFOURKAYYY is a 4K-readability companion for EverQuest Legends on Windows. It can keep the UI at native 100% while applying an adjustable clarity pass, or render at a lower real resolution and scale the complete frame for larger UI and overhead names.
+SpinFOURKAYYY is a 4K-readability companion for EverQuest Legends on Windows. It can preserve the original pixels at native 100%, or render at a lower real resolution and scale the complete frame for larger UI and overhead names through a text-first directional scaler.
 
 For sizes above 100%, SpinFOURKAYYY automatically fits every player's own `UI_<character>_<server>...ini` layout to the chosen render size before the normal launcher opens. It works with default, custom, and character-specific UI layouts—no bundled layout or hardcoded character name is required. It does not replace EverQuest assets, inject code, alter network traffic, install a display driver, or force Windows desktop scaling to 100%.
 
@@ -8,12 +8,12 @@ For sizes above 100%, SpinFOURKAYYY automatically fits every player's own `UI_<c
 
 1. Extract the complete SpinFOURKAYYY release into a normal user-writable folder.
 2. Run `SpinFOURKAYYY.exe` and choose:
-   - **Native clarity (100%)** for the same UI size with a crisper visible world and overhead-name text; or
+   - **Native pixels (100%)** for the game's original image with no sharpening; or
    - any value from **101% to 200%** for larger UI and larger visible overhead names.
 3. Click **Start EverQuest for me**. The normal Legends launcher opens; patch and sign in normally.
 4. Keep SpinFOURKAYYY open while playing. When EverQuest exits, the app saves layout changes for that percentage and returns the live layout files to native geometry automatically.
 
-SpinFOURKAYYY never resizes or attaches to an already-running client. Choose the percentage, clarity strength, and anti-aliasing first, then launch through the app. This guarantees that EverQuest starts in a normal (not maximized or fullscreen) window at the exact physical source size Magpie will validate.
+SpinFOURKAYYY never resizes or attaches to an already-running client. Choose the percentage and any advanced quality options first, then launch through the app. This guarantees that EverQuest starts in a normal (not maximized or fullscreen) window at the exact physical source size Magpie will validate.
 
 No character-profile selection is required. **Current/default/custom UI** remains selected unless the user explicitly chooses the optional strict SpinUI workflow.
 
@@ -29,20 +29,20 @@ The automatic layout transaction is deliberately narrow and recoverable:
 
 SpinFOURKAYYY stays open until EverQuest exits so this capture-and-restore step cannot be skipped accidentally. If the app or Windows is interrupted, reopen SpinFOURKAYYY to resume recovery. Older pre-session backups from earlier versions remain separate: **Restore profile** is still manual and never runs as part of the new layout flow.
 
-## Native clarity versus larger UI
+## Native pixels versus larger UI
 
 EverQuest composites the 3D world, UI, UI text, and overhead names into one frame.
 
 | Mode | 4K source | UI size | Intended result |
 | --- | ---: | ---: | --- |
-| Native clarity | 3840×2160 | 100% | Native world/UI resolution plus an adjustable RCAS clarity treatment |
-| Gentle | 3072×1728 | 125% | Larger UI and names while retaining the most world detail |
+| Native pixels | 3840×2160 | 100% | Original world/UI pixels with no sharpening or whole-frame smoothing |
+| Gentle | 3072×1728 | 125% | Larger UI and names through one directional NIS scaling pass |
 | Balanced | 2560×1440 | 150% | Strong readability with a lower 3D source resolution |
 | Comfort | 1920×1080 | 200% | Maximum UI/name size; world starts from 1080p |
 
 The slider covers every exact 1% step from 100% through 200%. Values above 100% use a smaller real source resolution, so they enlarge the complete frame and necessarily trade some 3D resolution for readability. Values around 110%–133% are the quality-first range on high-resolution and ultrawide monitors.
 
-**Native clarity** does not enlarge the UI or nameplates. Its GPU-vendor-neutral RCAS pass can make already-visible distant names cleaner, but it cannot increase the game's nameplate draw distance, recreate faded or culled text, or enlarge names independently from the UI.
+**Native pixels** does not enlarge the UI or nameplates. It intentionally avoids post-process sharpening because a shader cannot recreate glyph samples that the game did not render; at 1:1, the original game pixels are the most faithful result. It cannot increase nameplate draw distance or enlarge names independently from the UI.
 
 A true native-resolution 3D world with independently larger UI/nameplates would require client-native fractional scaling or a separately maintained UI/XML/font implementation. An external whole-frame scaler cannot honestly provide that split.
 
@@ -50,31 +50,31 @@ A true native-resolution 3D world with independently larger UI/nameplates would 
 
 Before an above-100% session, SpinFOURKAYYY selects or creates a verified layout profile for the exact native-to-source resolution pair and temporarily prepares the game's windowed launch size. It then opens the normal launcher, binds to the exact resulting EverQuest process and window, and scales that source window to borderless fullscreen with the bundled Magpie engine.
 
-On first use for each app version, the bundled engine is validated and copied to a dedicated runtime under `%LOCALAPPDATA%\SpinFOURKAYYY\engine-runtime`. The running scaler no longer depends on files inside a download, extracted release, or developer build folder that might be replaced while its shaders are loading. Every required FSR, Lanczos, FXAA, and SMAA asset is checked again immediately before Magpie starts.
+On first use for each app version, the bundled engine is validated and copied to a dedicated runtime under `%LOCALAPPDATA%\SpinFOURKAYYY\engine-runtime`. The running scaler no longer depends on files inside a download, extracted release, or developer build folder that might be replaced while its shaders are loading. Every required NIS, FSR, Lanczos, FXAA, and SMAA asset is checked again immediately before Magpie starts.
 
-The percentage, clarity, and anti-aliasing controls are locked for the active session because changing them safely requires a fresh prepared source window. Exit EverQuest, choose new settings, and launch again; the matching layout profile is generated automatically. When scaling stops, EverQuest remains in its ordinary prepared window. When the game exits, layout changes are captured and the native layout transaction is completed.
+The percentage and quality controls are locked for the active session because changing them safely requires a fresh prepared source window. Exit EverQuest, choose new settings, and launch again; the matching layout profile is generated automatically. When scaling stops, EverQuest remains in its ordinary prepared window. When the game exits, layout changes are captured and the native layout transaction is completed.
 
-## Adjustable clarity
+## Readable UI and text edge detail
 
-The **Clarity strength** slider (0–100%, default 65%) controls one bounded RCAS sharpening pass applied to the visible frame in every mode:
+**Readable UI** is the recommended and default enlarged mode. It uses NVIDIA Image Scaling's directional reconstruction and adaptive sharpening together in one GPU-vendor-neutral Magpie pass. It never stacks RCAS, SMAA, or FXAA afterward, because those extra whole-frame passes can blur small strokes or turn them into halos and grain.
 
-- **0%** disables sharpening entirely.
-- **65%** is the balanced default for clearer edges without aggressively exposing texture noise.
-- **66–100%** is progressively stronger and may make older bitmap UI artwork look harsher.
+The **Text edge detail** slider is deliberately limited to **0–30%** and defaults to **20%**:
 
-SpinFOURKAYYY intentionally does not stack a second sharpening pass. Consecutive RCAS passes amplify source noise, ringing, and grain instead of restoring detail that was not present in the smaller source frame.
+- **0%** uses NIS reconstruction without added adaptive sharpening.
+- **20%** is the recommended balance for small lettering and UI artwork.
+- **30%** is the guarded maximum; stronger values are intentionally unavailable.
 
-Choose clarity before launching. It remains locked during the session so SpinFOURKAYYY never has to stop and re-attach Magpie to a running EverQuest window.
+The control is disabled for Native pixels, Lanczos, and Exact pixels. The optional **Smooth world · FSR** compatibility filter maps the same bounded value to its one RCAS pass. No mode uses two sharpening passes. Choose the setting before launching; it remains locked during the session so SpinFOURKAYYY never has to stop and re-attach Magpie to a running EverQuest window.
 
 ## Optional anti-aliasing
 
-The advanced controls include whole-frame post-process anti-aliasing:
+The advanced compatibility controls include whole-frame post-process anti-aliasing:
 
 - **Off** is the default and preserves the sharpest small UI text.
 - **SMAA High** provides cleaner edges while retaining more fine detail.
 - **FXAA High** is a lighter, softer alternative.
 
-Anti-aliasing runs after the selected scaling filter and before RCAS clarity. It smooths the complete composed frame rather than changing EverQuest's internal 3D anti-aliasing setting, so it also affects UI text and artwork. Choose the option before launching; use Off if small text looks too soft.
+Anti-aliasing smooths the complete composed frame rather than changing EverQuest's internal 3D anti-aliasing setting, so it also affects UI text and artwork. Readable UI always forces it Off and disables this control. Other compatibility filters can use it; choose the option before launching and use Off if small text looks too soft.
 
 ## Fullscreen, Alt+Tab, and mouse behavior
 
@@ -94,8 +94,9 @@ Strict SpinUI mode offers only validated source resolutions and requires the use
 
 ## Filters and performance
 
-- **Native clarity** uses the adjustable RCAS clarity path at 100% source size.
-- **Adaptive FSR** is the default vendor-neutral upscaling path for fractional enlargement.
+- **Native pixels** uses an exact 1:1 nearest pass with no sharpening at 100% source size.
+- **Readable UI** is the default fractional enlargement path: one NIS directional scaling pass at a guarded detail strength.
+- **Smooth world · FSR** remains an optional compatibility path with one bounded RCAS pass.
 - **Lanczos** is a lighter fallback for enlarged modes.
 - **Exact pixels** is intended only for a true 2× Comfort plan.
 

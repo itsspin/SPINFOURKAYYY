@@ -20,13 +20,13 @@ public sealed class ResolutionPlanner
                 "Balanced",
                 "Renders at roughly two-thirds of the display size for a 1.5x larger UI.",
                 1.5,
-                ScalingFilter.Fsr),
+                ScalingFilter.Nis),
             new(
                 ResolutionPresetKind.Comfort,
                 "Comfort",
                 "Renders at half of the display size for a 2x larger UI.",
                 2.0,
-                ScalingFilter.Fsr),
+                ScalingFilter.Nis),
             new(
                 ResolutionPresetKind.PixelCrisp,
                 "Pixel Crisp",
@@ -122,7 +122,7 @@ public sealed class ResolutionPlanner
             // silently collapse to a 1:1 pass instead of the requested scale.
             if (!exactIntegerSourceFound)
             {
-                filter = ScalingFilter.Fsr;
+                filter = ScalingFilter.Nis;
             }
         }
 

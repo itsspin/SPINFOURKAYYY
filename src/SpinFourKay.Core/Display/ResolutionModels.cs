@@ -46,6 +46,7 @@ public enum ResolutionPresetKind
 
 public enum ScalingFilter
 {
+    Nis,
     Fsr,
     Lanczos,
     NearestNeighbor,

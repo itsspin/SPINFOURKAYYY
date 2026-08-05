@@ -23,7 +23,7 @@ public sealed record FourKayLaunchRequest
 
     public TimeSpan ScalingTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
-    public double RcasSharpness { get; init; } = 0.65;
+    public double RcasSharpness { get; init; } = 0.20;
 
     public AntiAliasingMode AntiAliasing { get; init; } = AntiAliasingMode.Off;
 
@@ -71,7 +71,7 @@ public sealed record FourKayAttachRequest
 
     public TimeSpan ScalingTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
-    public double RcasSharpness { get; init; } = 0.65;
+    public double RcasSharpness { get; init; } = 0.20;
 
     public AntiAliasingMode AntiAliasing { get; init; } = AntiAliasingMode.Off;
 
@@ -639,11 +639,11 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                         requestedClientSize,
                         placement.Monitor.Bounds.Size))
                 {
-                    effectiveFilter = ScalingFilter.Fsr;
+                    effectiveFilter = ScalingFilter.Nis;
                     attachWarnings.Add(
                         "Pixel Crisp requires an exact integer scale. The running "
-                            + "window does not match one, so Attach safely used Smooth "
-                            + "FSR for this session.");
+                            + "window does not match one, so Attach safely used the "
+                            + "Readable UI scaler for this session.");
                 }
 
                 FourKayLaunchResult result =
@@ -1203,8 +1203,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 RcasSharpness = rcasSharpness,
                 AntiAliasing = antiAliasing,
                 NativeClarityOnly =
-                    filter == ScalingFilter.Fsr
-                    && placement.RequestedClientSize
+                    placement.RequestedClientSize
                         == placement.Monitor.Bounds.Size,
                 // The dedicated profile binds automatic startup to the exact
                 // eqgame.exe path and window class. This is source-specific;
@@ -2687,7 +2686,8 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         {
             throw new InvalidOperationException(
                 "Live fractional adjustment is unavailable with Exact pixels. Use "
-                    + "Adaptive FSR or Lanczos for a generic/custom UI session.");
+                    + "Readable UI, Smooth FSR, or Lanczos for a generic/custom "
+                    + "UI session.");
         }
 
         if (plan.PresetKind != ResolutionPresetKind.Custom
