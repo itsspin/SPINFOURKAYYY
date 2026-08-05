@@ -99,11 +99,11 @@ The shaders run on the GPU and work with AMD, NVIDIA, and compatible Intel adapt
 
 ## Download and verify
 
-SpinFOURKAYYY 1.0.2 is an unsigned prototype distributed as a ZIP plus a neighboring `.zip.sha256` file.
+SpinFOURKAYYY 1.0.3 is an unsigned prototype distributed as a ZIP plus a neighboring `.zip.sha256` file.
 
 ```powershell
-(Get-FileHash -Algorithm SHA256 .\SpinFOURKAYYY-1.0.2-win-x64.zip).Hash
-Get-Content .\SpinFOURKAYYY-1.0.2-win-x64.zip.sha256
+(Get-FileHash -Algorithm SHA256 .\SpinFOURKAYYY-1.0.3-win-x64.zip).Hash
+Get-Content .\SpinFOURKAYYY-1.0.3-win-x64.zip.sha256
 ```
 
 The hexadecimal values must match. Extract the ZIP completely and run the executable from the extracted folder, not from inside the archive, `Program Files`, the EverQuest directory, or an elevated administrator session.
@@ -132,7 +132,7 @@ Requirements:
 Run:
 
 ```powershell
-.\build.ps1 -Version 1.0.2
+.\build.ps1 -Version 1.0.3
 ```
 
 The first build downloads the official pinned Magpie v0.12.1 release, verifies its SHA-256 before use, and checks out its exact audited source commit. The build then restores dependencies, compiles with warnings treated as errors, runs the deterministic self-test suite, publishes a self-contained single-file executable, verifies licenses, stages corresponding source, and creates the release ZIP plus SHA-256 sidecar under `artifacts`.
@@ -147,7 +147,7 @@ Two GitHub Actions workflows run the same `build.ps1` pipeline on `windows-lates
 To cut a release:
 
 1. Update the `<Version>`, `<FileVersion>`, and `<AssemblyVersion>` values in the app project and merge to `main`.
-2. Either push the matching tag (`git tag v1.0.2 && git push origin v1.0.2`), or open **Actions → Release → Run workflow** on `main` and enter the tag name. If the tag does not exist yet, the workflow verifies the project version first and then creates the tag itself; if it does exist, that exact tag is rebuilt and the release's assets and notes are refreshed in place.
+2. Either push the matching tag (`git tag v1.0.3 && git push origin v1.0.3`), or open **Actions → Release → Run workflow** on `main` and enter the tag name. If the tag does not exist yet, the workflow verifies the project version first and then creates the tag itself; if it does exist, that exact tag is rebuilt and the release's assets and notes are refreshed in place.
 
 ## Third-party and trademark notice
 
