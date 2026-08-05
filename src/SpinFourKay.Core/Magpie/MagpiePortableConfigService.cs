@@ -11,6 +11,10 @@ namespace SpinFourKay.Core.Magpie;
 /// </summary>
 public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
 {
+    public const double ReadableNisMinimumScale = 1.20;
+    public const double ReadableScaleComparisonTolerance = 0.0005;
+    public const double ReadableLanczosAntiRinging = 0.75;
+
     public const string SmoothModeName = "SpinFOURKAYYY - Smooth FSR";
     public const string ReadableModeName =
         "SpinFOURKAYYY - Readable UI";
@@ -56,7 +60,9 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         int readableIndex = UpsertNamedObject(
             scalingModes,
             ReadableModeName,
-            CreateNisMode(request.RcasSharpness));
+            CreateReadableMode(
+                request.RcasSharpness,
+                request.UiScaleFactor));
         int nativeClarityIndex = UpsertNamedObject(
             scalingModes,
             NativeClarityModeName,
@@ -336,27 +342,46 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
     }
 
     /// <summary>
-    /// NIS combines directional reconstruction and adaptive sharpening in one
-    /// scaling pass. Do not append RCAS, SMAA, or FXAA here: those whole-frame
-    /// post-processes can turn small glyph strokes into blur, halos, and grain.
+    /// Very mild enlargement needs reconstruction, not sharpening: Lanczos with
+    /// strong anti-ringing retains source detail without amplifying dense terrain
+    /// texture. At 1.20x and above, NIS combines directional reconstruction and
+    /// bounded adaptive sharpening in one pass. Neither path stacks another
+    /// whole-frame effect.
     /// </summary>
-    private static JsonObject CreateNisMode(double sharpness)
+    private static JsonObject CreateReadableMode(
+        double sharpness,
+        double uiScaleFactor)
     {
+        JsonObject effect =
+            uiScaleFactor + ReadableScaleComparisonTolerance
+                < ReadableNisMinimumScale
+            ? new JsonObject
+            {
+                ["name"] = "Lanczos",
+                ["scalingType"] = 1,
+                ["scale"] = CreateScale(),
+                ["parameters"] = new JsonObject
+                {
+                    ["ARStrength"] = ReadableLanczosAntiRinging,
+                },
+            }
+            : new JsonObject
+            {
+                ["name"] = @"NIS\NIS",
+                ["scalingType"] = 1,
+                ["scale"] = CreateScale(),
+                ["parameters"] = new JsonObject
+                {
+                    ["sharpness"] = sharpness,
+                },
+            };
+
         return new JsonObject
         {
             ["name"] = ReadableModeName,
             ["effects"] = new JsonArray
             {
-                new JsonObject
-                {
-                    ["name"] = @"NIS\NIS",
-                    ["scalingType"] = 1,
-                    ["scale"] = CreateScale(),
-                    ["parameters"] = new JsonObject
-                    {
-                        ["sharpness"] = sharpness,
-                    },
-                },
+                effect,
             },
         };
     }
@@ -660,6 +685,16 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
                 nameof(request),
                 request.RcasSharpness,
                 "Edge-detail strength must be between 0 and 1.");
+        }
+
+        if (!double.IsFinite(request.UiScaleFactor)
+            || request.UiScaleFactor < 1
+            || request.UiScaleFactor > 4)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(request),
+                request.UiScaleFactor,
+                "UI scale factor must be between 1 and 4.");
         }
 
         if (!Enum.IsDefined(request.AntiAliasing))

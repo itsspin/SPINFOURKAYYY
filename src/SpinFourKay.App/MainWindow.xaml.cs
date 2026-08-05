@@ -1846,6 +1846,7 @@ public partial class MainWindow : Window, IDisposable
                 try
                 {
                     QualityComboBox.SelectedIndex = 0;
+                    AntiAliasingComboBox.SelectedIndex = 0;
                 }
                 finally
                 {
@@ -2256,10 +2257,10 @@ public partial class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// Maps the capped edge-detail control directly to the selected scaler. NIS
-    /// applies it inside its one directional scaling pass; optional FSR uses one
-    /// RCAS pass. The UI cannot request the artifact-prone upper 70% of either
-    /// shader's range.
+    /// Maps the capped edge-detail control directly to the selected scaler. At
+    /// mild enlargement Readable UI ignores it and uses clean Lanczos
+    /// reconstruction; from 1.20x, NIS applies it inside its one directional
+    /// pass. Optional FSR uses one RCAS pass.
     /// </summary>
     private double SelectedClaritySharpness() =>
         Math.Clamp(
@@ -2419,7 +2420,12 @@ public partial class MainWindow : Window, IDisposable
         ClaritySlider.IsEnabled =
             configurationAvailable
             && isUpscaling
-            && selectedQuality is ScalingFilter.Nis or ScalingFilter.Fsr;
+            && (selectedQuality == ScalingFilter.Fsr
+                || (selectedQuality == ScalingFilter.Nis
+                    && _currentPlan!.ActualUiScale
+                            + MagpiePortableConfigService
+                                .ReadableScaleComparisonTolerance
+                        >= MagpiePortableConfigService.ReadableNisMinimumScale));
         SpinUiLayoutReadyCheckBox.IsEnabled =
             controlsAvailable
             && UsesStrictSpinUiMode

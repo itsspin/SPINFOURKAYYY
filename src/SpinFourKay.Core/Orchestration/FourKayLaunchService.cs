@@ -23,7 +23,7 @@ public sealed record FourKayLaunchRequest
 
     public TimeSpan ScalingTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
-    public double RcasSharpness { get; init; } = 0.20;
+    public double RcasSharpness { get; init; } = 0.10;
 
     public AntiAliasingMode AntiAliasing { get; init; } = AntiAliasingMode.Off;
 
@@ -71,7 +71,7 @@ public sealed record FourKayAttachRequest
 
     public TimeSpan ScalingTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
-    public double RcasSharpness { get; init; } = 0.20;
+    public double RcasSharpness { get; init; } = 0.10;
 
     public AntiAliasingMode AntiAliasing { get; init; } = AntiAliasingMode.Off;
 
@@ -1201,6 +1201,11 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 LauncherPath = launcherPath,
                 Filter = filter,
                 RcasSharpness = rcasSharpness,
+                UiScaleFactor = Math.Min(
+                    (double)placement.Monitor.Bounds.Width
+                        / placement.RequestedClientSize.Width,
+                    (double)placement.Monitor.Bounds.Height
+                        / placement.RequestedClientSize.Height),
                 AntiAliasing = antiAliasing,
                 NativeClarityOnly =
                     placement.RequestedClientSize

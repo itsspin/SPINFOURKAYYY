@@ -85,6 +85,9 @@ internal static class Program
         runner.Add("Magpie / portable JSON schema and exact profile", MagpiePortableJsonSchemaAsync);
         runner.Add("Magpie / profile upsert and every filter", MagpieProfileUpsertAndFiltersAsync);
         runner.Add(
+            "Magpie / readable scale threshold and isolated effects",
+            MagpieReadableScaleThresholdAsync);
+        runner.Add(
             "Magpie / stable versioned runtime survives source replacement",
             MagpieStableRuntimeProvisioningAsync);
         runner.Add(
@@ -1971,6 +1974,95 @@ internal static class Program
                 })).ConfigureAwait(false);
     }
 
+    private static async Task MagpieReadableScaleThresholdAsync()
+    {
+        await using TempDirectory temp = new();
+        MagpieFixture fixture = await MagpieFixture.CreateAsync(temp.Path)
+            .ConfigureAwait(false);
+        MagpiePortableConfigService service = new();
+
+        async Task<JsonElement> WriteAndReadReadableModeAsync(
+            double uiScaleFactor,
+            double sharpness)
+        {
+            MagpiePortableConfigResult result = await service.WriteAsync(
+                fixture.CreateRequest(ScalingFilter.Nis) with
+                {
+                    UiScaleFactor = uiScaleFactor,
+                    RcasSharpness = sharpness,
+                    AntiAliasing = AntiAliasingMode.Smaa,
+                }).ConfigureAwait(false);
+            using JsonDocument json = JsonDocument.Parse(
+                await File.ReadAllBytesAsync(result.ConfigPath)
+                    .ConfigureAwait(false));
+            JsonElement modes = json.RootElement.GetProperty("scalingModes");
+            Assert.Equal(
+                MagpiePortableConfigService.ReadableModeName,
+                modes[result.ScalingModeIndex].GetProperty("name").GetString());
+            return FindNamed(
+                modes,
+                MagpiePortableConfigService.ReadableModeName).Clone();
+        }
+
+        foreach (double uiScaleFactor in new[] { 1.10, 1.199 })
+        {
+            JsonElement readableMode = await WriteAndReadReadableModeAsync(
+                uiScaleFactor,
+                sharpness: 0.42).ConfigureAwait(false);
+            JsonElement effects = readableMode.GetProperty("effects");
+            Assert.Equal(1, effects.GetArrayLength());
+            JsonElement effect = effects[0];
+            Assert.Equal("Lanczos", effect.GetProperty("name").GetString());
+            Assert.Equal(1, effect.GetProperty("scalingType").GetInt32());
+            Assert.NearlyEqual(
+                1.0,
+                effect.GetProperty("scale").GetProperty("x").GetDouble());
+            Assert.NearlyEqual(
+                1.0,
+                effect.GetProperty("scale").GetProperty("y").GetDouble());
+            JsonElement parameters = effect.GetProperty("parameters");
+            Assert.NearlyEqual(
+                MagpiePortableConfigService.ReadableLanczosAntiRinging,
+                parameters.GetProperty("ARStrength").GetDouble());
+            Assert.NearlyEqual(
+                0.75,
+                parameters.GetProperty("ARStrength").GetDouble());
+            Assert.False(parameters.TryGetProperty("sharpness", out _));
+
+            string[] effectNames = effects
+                .EnumerateArray()
+                .Select(item => item.GetProperty("name").GetString() ?? string.Empty)
+                .ToArray();
+            Assert.False(
+                effectNames.Any(
+                    name => name.Contains("NIS", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("RCAS", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("SMAA", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("FXAA", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        const double RequestedSharpness = 0.27;
+        JsonElement thresholdMode = await WriteAndReadReadableModeAsync(
+            MagpiePortableConfigService.ReadableNisMinimumScale,
+            RequestedSharpness).ConfigureAwait(false);
+        JsonElement thresholdEffects = thresholdMode.GetProperty("effects");
+        Assert.Equal(1, thresholdEffects.GetArrayLength());
+        JsonElement thresholdEffect = thresholdEffects[0];
+        Assert.Equal(
+            @"NIS\NIS",
+            thresholdEffect.GetProperty("name").GetString());
+        Assert.NearlyEqual(
+            RequestedSharpness,
+            thresholdEffect
+                .GetProperty("parameters")
+                .GetProperty("sharpness")
+                .GetDouble());
+        Assert.False(
+            thresholdEffect
+                .GetProperty("parameters")
+                .TryGetProperty("ARStrength", out _));
+    }
+
     private static async Task MagpieStableRuntimeProvisioningAsync()
     {
         await using TempDirectory temp = new();
@@ -2144,6 +2236,15 @@ internal static class Program
             {
                 RcasSharpness = -0.01,
             })).ConfigureAwait(false);
+        foreach (double invalidUiScaleFactor in new[] { 0.999, 4.001, double.NaN })
+        {
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+                () => service.WriteAsync(
+                    fixture.CreateRequest(ScalingFilter.Nis) with
+                    {
+                        UiScaleFactor = invalidUiScaleFactor,
+                    })).ConfigureAwait(false);
+        }
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => service.WriteAsync(fixture.CreateRequest(ScalingFilter.Fsr) with
             {
@@ -5314,6 +5415,18 @@ internal static class Program
             Assert.True(
                 harness.Config.LastPreparedRequest?.ThreeDGameMode
                     == false);
+            MagpieProfileRequest preparedRequest =
+                harness.Config.LastPreparedRequest
+                ?? throw new TestFailureException(
+                    "The launch did not prepare a Magpie profile request.");
+            double expectedUiScaleFactor = Math.Min(
+                (double)result.Placement.Monitor.Bounds.Width
+                    / result.Placement.RequestedClientSize.Width,
+                (double)result.Placement.Monitor.Bounds.Height
+                    / result.Placement.RequestedClientSize.Height);
+            Assert.NearlyEqual(
+                expectedUiScaleFactor,
+                preparedRequest.UiScaleFactor);
             Assert.Equal(1, harness.Config.WriteCalls);
             Assert.Equal(0, harness.Config.RollbackCalls);
             Assert.Equal(1, harness.Magpie.StartCalls);

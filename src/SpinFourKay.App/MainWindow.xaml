@@ -662,32 +662,32 @@
                                     <Grid Margin="0,0,0,4">
                                         <TextBlock FontSize="12"
                                                    FontWeight="SemiBold"
-                                                   Text="Text edge detail" />
+                                                   Text="Fine edge detail" />
                                         <TextBlock x:Name="ClarityValueText"
                                                    HorizontalAlignment="Right"
                                                    FontFamily="Cascadia Mono, Consolas"
                                                    FontSize="12"
                                                    FontWeight="Bold"
                                                    Foreground="{StaticResource CyanBrush}"
-                                                   Text="20%" />
+                                                   Text="10%" />
                                     </Grid>
                                     <Slider x:Name="ClaritySlider"
                                             Minimum="0"
-                                            Maximum="30"
-                                            Value="20"
+                                            Maximum="20"
+                                            Value="10"
                                             SmallChange="5"
                                             LargeChange="10"
                                             TickFrequency="5"
                                             IsSnapToTickEnabled="True"
                                             AutoToolTipPlacement="TopLeft"
-                                            AutomationProperties.Name="Text edge detail strength"
-                                            AutomationProperties.HelpText="Controls the bounded edge detail inside the single-pass Readable UI scaler. Twenty percent is recommended; the safe maximum is thirty percent. Choose before launching EverQuest."
+                                            AutomationProperties.Name="Fine edge detail strength"
+                                            AutomationProperties.HelpText="At 120 percent and above, controls bounded edge detail inside the single-pass Readable UI scaler. Ten percent is recommended and twenty percent is the safe maximum. At 101 through 119 percent, clean anti-ringing reconstruction is automatic."
                                             ValueChanged="ClaritySlider_ValueChanged" />
                                     <TextBlock Margin="0,4,0,0"
                                                FontSize="11"
                                                Foreground="{StaticResource MutedTextBrush}"
                                                TextWrapping="Wrap"
-                                               Text="Readable UI reconstructs and sharpens edges together in one directional pass. 20% is recommended; the control is capped at 30% to protect small lettering from halos and grain." />
+                                               Text="At 101–119%, Readable UI uses clean anti-ringing reconstruction with no sharpening. At 120%+, 10% directional edge detail is recommended and capped at 20% to prevent terrain grain." />
                                 </StackPanel>
                             </Grid>
 
