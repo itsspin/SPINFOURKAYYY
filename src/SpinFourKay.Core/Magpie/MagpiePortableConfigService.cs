@@ -50,19 +50,25 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         int smoothIndex = UpsertNamedObject(
             scalingModes,
             SmoothModeName,
-            CreateFsrMode(request.RcasSharpness));
+            CreateFsrMode(request.RcasSharpness, request.AntiAliasing));
         int nativeClarityIndex = UpsertNamedObject(
             scalingModes,
             NativeClarityModeName,
-            CreateNativeClarityMode(request.RcasSharpness));
+            CreateNativeClarityMode(request.RcasSharpness, request.AntiAliasing));
         int pixelCrispIndex = UpsertNamedObject(
             scalingModes,
             PixelCrispModeName,
-            CreateSingleEffectMode(PixelCrispModeName, "Nearest"));
+            CreateSingleEffectMode(
+                PixelCrispModeName,
+                "Nearest",
+                request.AntiAliasing));
         int lanczosIndex = UpsertNamedObject(
             scalingModes,
             LanczosModeName,
-            CreateSingleEffectMode(LanczosModeName, "Lanczos"));
+            CreateSingleEffectMode(
+                LanczosModeName,
+                "Lanczos",
+                request.AntiAliasing));
 
         int selectedMode = request.NativeClarityOnly
             ? nativeClarityIndex
@@ -300,7 +306,9 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         root["duplicateFrameDetectionMode"] ??= 1;
     }
 
-    private static JsonObject CreateFsrMode(double rcasSharpness)
+    private static JsonObject CreateFsrMode(
+        double rcasSharpness,
+        AntiAliasingMode antiAliasing)
     {
         JsonArray effects =
         [
@@ -311,6 +319,7 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
                 ["scale"] = CreateScale(),
             },
         ];
+        AppendAntiAliasingEffect(effects, antiAliasing);
         AppendRcasSharpeningPasses(effects, rcasSharpness);
         return new JsonObject
         {
@@ -319,15 +328,38 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         };
     }
 
-    private static JsonObject CreateNativeClarityMode(double rcasSharpness)
+    private static JsonObject CreateNativeClarityMode(
+        double rcasSharpness,
+        AntiAliasingMode antiAliasing)
     {
         JsonArray effects = [];
+        AppendAntiAliasingEffect(effects, antiAliasing);
         AppendRcasSharpeningPasses(effects, rcasSharpness);
         return new JsonObject
         {
             ["name"] = NativeClarityModeName,
             ["effects"] = effects,
         };
+    }
+
+    private static void AppendAntiAliasingEffect(
+        JsonArray effects,
+        AntiAliasingMode antiAliasing)
+    {
+        string? effectName = antiAliasing switch
+        {
+            AntiAliasingMode.Off => null,
+            AntiAliasingMode.Fxaa => @"FXAA\FXAA_High",
+            AntiAliasingMode.Smaa => @"SMAA\SMAA_High",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(antiAliasing),
+                antiAliasing,
+                "The anti-aliasing mode is not supported."),
+        };
+        if (effectName is not null)
+        {
+            effects.Add(new JsonObject { ["name"] = effectName });
+        }
     }
 
     /// <summary>
@@ -364,20 +396,25 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
         }
     }
 
-    private static JsonObject CreateSingleEffectMode(string modeName, string effectName)
+    private static JsonObject CreateSingleEffectMode(
+        string modeName,
+        string effectName,
+        AntiAliasingMode antiAliasing)
     {
+        JsonArray effects =
+        [
+            new JsonObject
+            {
+                ["name"] = effectName,
+                ["scalingType"] = 1,
+                ["scale"] = CreateScale(),
+            },
+        ];
+        AppendAntiAliasingEffect(effects, antiAliasing);
         return new JsonObject
         {
             ["name"] = modeName,
-            ["effects"] = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["name"] = effectName,
-                    ["scalingType"] = 1,
-                    ["scale"] = CreateScale(),
-                },
-            },
+            ["effects"] = effects,
         };
     }
 
@@ -602,6 +639,14 @@ public sealed class MagpiePortableConfigService : IMagpiePortableConfigService
                 request.RcasSharpness,
                 "RCAS sharpness must be between 0 and 2; values above 1 add a "
                     + "second sharpening pass.");
+        }
+
+        if (!Enum.IsDefined(request.AntiAliasing))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(request),
+                request.AntiAliasing,
+                "The anti-aliasing mode is not supported.");
         }
 
         if (request.NativeClarityOnly

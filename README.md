@@ -62,6 +62,16 @@ The **Clarity strength** slider (0–200%, default 110%) controls the RCAS sharp
 
 Clarity changes apply to a live session automatically: the engine restarts its fullscreen output with the new strength in a few seconds, without touching the game.
 
+## Optional anti-aliasing
+
+The advanced controls include whole-frame post-process anti-aliasing:
+
+- **Off** is the default and preserves the sharpest small UI text.
+- **SMAA High** provides cleaner edges while retaining more fine detail.
+- **FXAA High** is a lighter, softer alternative.
+
+Anti-aliasing runs after the selected scaling filter and before RCAS clarity. It smooths the complete composed frame rather than changing EverQuest's internal 3D anti-aliasing setting, so it also affects UI text and artwork. Choose the option before launching; use Off if small text looks too soft.
+
 ## Fullscreen, Alt+Tab, and mouse behavior
 
 Legends remains in windowed mode underneath a borderless output that fills the selected monitor. Magpie normal mode is used so Alt+Tab is a focus/Z-order change rather than an exclusive-fullscreen transition.
