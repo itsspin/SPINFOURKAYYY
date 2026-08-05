@@ -9,6 +9,7 @@ public enum FourKayJournalStatus
 {
     Preparing,
     Prepared,
+    Committed,
     Restored,
     RestoredWithDpiConflict,
     FailedAndRolledBack,
@@ -34,6 +35,14 @@ public sealed record FourKayPreparationRequest
     public int ChatFontSizeIncrease { get; init; }
 
     public FourKayUiCompatibilityMode UiCompatibilityMode { get; init; }
+
+    /// <summary>
+    /// Keeps the verified windowed resolution and application-DPI configuration
+    /// as the user's selected launch settings. This mode protects only
+    /// eqclient.ini during the atomic preparation step and never snapshots or
+    /// restores character layouts, hotbars, macros, socials, or userdata.
+    /// </summary>
+    public bool KeepPreparedConfiguration { get; init; }
 }
 
 public sealed record FourKayPreparedState
@@ -86,6 +95,8 @@ public sealed record FourKayPreparedState
     public int? AppliedChatFontSize { get; init; }
 
     public FourKayUiCompatibilityMode UiCompatibilityMode { get; init; }
+
+    public bool KeepPreparedConfiguration { get; init; }
 
     public IReadOnlyList<string> Warnings { get; init; } = [];
 

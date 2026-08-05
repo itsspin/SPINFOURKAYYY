@@ -438,22 +438,22 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <Button x:Name="AttachButton"
-                                Grid.Column="0"
-                                MinHeight="52"
-                                AutomationProperties.Name="Scale the running game now"
-                                AutomationProperties.HelpText="Applies Native clarity to a running game, or stops the active fullscreen scaling session."
-                                IsEnabled="False"
-                                Style="{StaticResource PrimaryButton}"
-                                Click="Attach_Click"
-                                Content="Scale the running game" />
-                        <Button x:Name="PrepareLaunchButton"
                                 Grid.Column="2"
                                 MinWidth="190"
                                 MinHeight="48"
+                                AutomationProperties.Name="Stop active fullscreen scaling"
+                                AutomationProperties.HelpText="Stops the active fullscreen scaling session. Running games cannot be attached or resized."
+                                IsEnabled="False"
+                                Style="{StaticResource SecondaryButton}"
+                                Click="Attach_Click"
+                                Content="Launch required" />
+                        <Button x:Name="PrepareLaunchButton"
+                                Grid.Column="0"
+                                MinHeight="52"
                                 AutomationProperties.Name="Start EverQuest and scale automatically"
                                 AutomationProperties.HelpText="Fits personal UI layouts for the selected percentage, starts the normal Legends launcher, and applies fullscreen scaling automatically."
                                 IsEnabled="False"
-                                Style="{StaticResource SecondaryButton}"
+                                Style="{StaticResource PrimaryButton}"
                                 Click="PrepareAndLaunch_Click"
                                 Content="Start EverQuest for me" />
                     </Grid>
@@ -679,13 +679,13 @@
                                             IsSnapToTickEnabled="True"
                                             AutoToolTipPlacement="TopLeft"
                                             AutomationProperties.Name="Clarity sharpening strength"
-                                            AutomationProperties.HelpText="Zero disables sharpening; values above one hundred percent add a second sharpening pass. Applies live to an active session."
+                                            AutomationProperties.HelpText="Zero disables sharpening; values above one hundred percent add a second sharpening pass. Choose before launching EverQuest."
                                             ValueChanged="ClaritySlider_ValueChanged" />
                                     <TextBlock Margin="0,4,0,0"
                                                FontSize="11"
                                                Foreground="{StaticResource MutedTextBrush}"
                                                TextWrapping="Wrap"
-                                               Text="Sharpens the whole visible frame. Above 100% adds a second sharpening pass; changes apply live." />
+                                               Text="Sharpens the whole visible frame. Above 100% adds a second sharpening pass; choose before launch." />
                                 </StackPanel>
                             </Grid>
 

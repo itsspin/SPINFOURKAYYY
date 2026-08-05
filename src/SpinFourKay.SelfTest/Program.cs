@@ -126,6 +126,9 @@ internal static class Program
         runner.Add("Journal / duplicate, missing, corrupt, version errors", JournalErrorPathsAsync);
         runner.Add("Preparation / reversible prepared state and pending blocker", PreparationAndPendingBlockerAsync);
         runner.Add(
+            "Preparation / managed launch commits config without player-state restore",
+            ManagedLaunchPreparationCommitsConfigurationOnlyAsync);
+        runner.Add(
             "Preparation / explicit custom mode ignores installed SpinUI assets",
             PreparationExplicitCustomModeIgnoresInstalledSpinUiAssetsAsync);
         runner.Add("Preparation / failure rolls back INI and DPI", PreparationRollbackAsync);
@@ -1844,6 +1847,43 @@ internal static class Program
             @"SMAA\SMAA_High",
             smaaCrispEffects[1].GetProperty("name").GetString());
 
+        MagpiePortableConfigResult nativeSmaaBoosted = await service.WriteAsync(
+            fixture.CreateRequest(ScalingFilter.Fsr) with
+            {
+                NativeClarityOnly = true,
+                AntiAliasing = AntiAliasingMode.Smaa,
+                RcasSharpness = 1.2,
+            }).ConfigureAwait(false);
+        using JsonDocument nativeSmaaBoostedJson = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(nativeSmaaBoosted.ConfigPath)
+                .ConfigureAwait(false));
+        JsonElement nativeSmaaBoostedEffects = FindNamed(
+            nativeSmaaBoostedJson.RootElement.GetProperty("scalingModes"),
+            MagpiePortableConfigService.NativeClarityModeName)
+            .GetProperty("effects");
+        Assert.Equal(3, nativeSmaaBoostedEffects.GetArrayLength());
+        Assert.Equal(
+            @"SMAA\SMAA_High",
+            nativeSmaaBoostedEffects[0].GetProperty("name").GetString());
+        Assert.Equal(
+            @"FSR\FSR_RCAS",
+            nativeSmaaBoostedEffects[1].GetProperty("name").GetString());
+        Assert.NearlyEqual(
+            1.0,
+            nativeSmaaBoostedEffects[1]
+                .GetProperty("parameters")
+                .GetProperty("sharpness")
+                .GetDouble());
+        Assert.Equal(
+            @"FSR\FSR_RCAS",
+            nativeSmaaBoostedEffects[2].GetProperty("name").GetString());
+        Assert.NearlyEqual(
+            0.2,
+            nativeSmaaBoostedEffects[2]
+                .GetProperty("parameters")
+                .GetProperty("sharpness")
+                .GetDouble());
+
         MagpiePortableConfigResult fxaa = await service.WriteAsync(
             fixture.CreateRequest(ScalingFilter.Lanczos) with
             {
@@ -3290,6 +3330,63 @@ internal static class Program
             active[0].UiCompatibilityMode);
     }
 
+    private static async Task ManagedLaunchPreparationCommitsConfigurationOnlyAsync()
+    {
+        await using TempDirectory temp = new();
+        FakeClientFixture client = await FakeClientFixture.CreateAsync(temp.Path)
+            .ConfigureAwait(false);
+        string layoutPath = Path.Combine(
+            client.EqDirectory,
+            "UI_TestCharacter_testserver.ini");
+        byte[] personalLayout = Encoding.UTF8.GetBytes(
+            "[Main]\r\nWindowedMode=2\r\n[HotButtons]\r\nButton1=/assist\r\n");
+        await File.WriteAllBytesAsync(layoutPath, personalLayout).ConfigureAwait(false);
+
+        string stateDirectory = Path.Combine(temp.Path, "state");
+        BackupService backup = new();
+        FourKayJournalStore journal = new();
+        FourKayPreparationService service = new(
+            backup,
+            new EqClientConfigurationService(),
+            new FakeDpiCompatibilityService(),
+            new FakeProcessDiscoveryService(),
+            journal,
+            FakeWindowPlacementService.Create4K());
+
+        FourKayPreparedState prepared = await service.PrepareAsync(
+            CreatePreparationRequest(
+                client.EqDirectory,
+                stateDirectory,
+                chatFontSizeIncrease: 0) with
+            {
+                KeepPreparedConfiguration = true,
+            }).ConfigureAwait(false);
+
+        Assert.Equal(FourKayJournalStatus.Committed, prepared.Status);
+        Assert.True(prepared.KeepPreparedConfiguration);
+        Assert.Equal(0, prepared.PlayerStateProtectionVersion);
+        Assert.Empty(prepared.ProtectedPlayerFiles);
+        Assert.Empty(await journal.ListActiveAsync(stateDirectory).ConfigureAwait(false));
+
+        BackupManifest manifest = await backup.LoadManifestAsync(
+            prepared.BackupManifestPath).ConfigureAwait(false);
+        Assert.Equal(1, manifest.Entries.Count);
+        Assert.Equal(
+            Path.GetFullPath(client.EqClientIniPath),
+            manifest.Entries[0].OriginalPath);
+        Assert.SequenceEqual(
+            personalLayout,
+            await File.ReadAllBytesAsync(layoutPath).ConfigureAwait(false));
+
+        EqClientVideoSettings settings = await new EqClientConfigurationService()
+            .ReadAsync(client.EqClientIniPath).ConfigureAwait(false);
+        Assert.Equal(new PixelSize(1920, 1080), settings.WindowedResolution);
+        Assert.Equal(false, settings.Fullscreen);
+        Assert.Equal(false, settings.Maximized);
+        Assert.Equal(false, settings.AllowResize);
+        Assert.Equal(0, settings.NativeUiScaleIndex);
+    }
+
     private static async Task PreparationRollbackAsync()
     {
         await using TempDirectory temp = new();
@@ -3720,6 +3817,20 @@ internal static class Program
             config,
             magpie,
             inspector);
+
+        MethodInfo validateLaunchRequest = typeof(FourKayLaunchService).GetMethod(
+            "ValidateLaunchRequest",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new TestFailureException(
+                "The launch request validator is unavailable.");
+        _ = validateLaunchRequest.Invoke(
+            null,
+            [CreateLaunchRequest(
+                prepared with
+                {
+                    Status = FourKayJournalStatus.Committed,
+                    KeepPreparedConfiguration = true,
+                })]);
 
         await Assert.ThrowsAsync<ArgumentNullException>(
             () => service.LaunchAndScaleAsync(null!)).ConfigureAwait(false);

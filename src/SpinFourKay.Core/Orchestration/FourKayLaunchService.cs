@@ -2548,10 +2548,12 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         ArgumentNullException.ThrowIfNull(request.PreparedState);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.LauncherPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.MagpieDirectory);
-        if (request.PreparedState.Status != FourKayJournalStatus.Prepared)
+        if (request.PreparedState.Status is not (
+                FourKayJournalStatus.Prepared
+                or FourKayJournalStatus.Committed))
         {
             throw new InvalidOperationException(
-                "The recovery journal is not in the Prepared state.");
+                "The launch configuration is not prepared and verified.");
         }
 
         if (!Enum.IsDefined(request.PreparedState.UiCompatibilityMode)
