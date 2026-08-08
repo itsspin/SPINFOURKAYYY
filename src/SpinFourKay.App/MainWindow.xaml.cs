@@ -1209,10 +1209,16 @@ public partial class MainWindow : Window, IDisposable
         }
 
         nint foregroundWindow = _foregroundWindow.GetForegroundWindowHandle();
+        WindowRuntimeSnapshot foregroundSnapshot =
+            _foregroundWindow.InspectWindow(foregroundWindow);
         bool gameSessionIsForeground =
             foregroundWindow == _activeLaunch.SourceWindow.Handle
             || foregroundWindow == overlays.ScalingWindowHandle
-            || overlays.TracksWindow(foregroundWindow);
+            || overlays.TracksWindow(foregroundWindow)
+            || (foregroundSnapshot.IsValid
+                && (foregroundSnapshot.ProcessId == _activeLaunch.GameProcess.Id
+                    || foregroundSnapshot.ProcessId
+                        == _activeLaunch.MagpieProcess.Process.Id));
         OverlayCompatibilityUpdate update = _overlayCompatibility.Maintain(
             overlays,
             gameSessionIsForeground,

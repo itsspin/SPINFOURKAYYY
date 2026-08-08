@@ -1293,6 +1293,8 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 overlaySession = _overlayCompatibility.Capture(
                     new OverlayCompatibilityCaptureRequest
                     {
+                        SourceWindowHandle = sourceWindow.Handle,
+                        SourceProcessId = gameProcess.Id,
                         SourceRegion = sourceWindow.ClientBounds,
                         TargetRegion = placement.Monitor.Bounds,
                         ExcludedProcessIds = excludedProcessIds,

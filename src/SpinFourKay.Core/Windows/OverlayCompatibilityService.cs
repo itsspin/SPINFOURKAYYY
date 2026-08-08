@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using SpinFourKay.Core.Display;
 
@@ -21,6 +22,10 @@ public sealed record OverlayWindowSnapshot(
 
 public sealed record OverlayCompatibilityCaptureRequest
 {
+    public required nint SourceWindowHandle { get; init; }
+
+    public required int SourceProcessId { get; init; }
+
     public required PixelRect SourceRegion { get; init; }
 
     public required PixelRect TargetRegion { get; init; }
@@ -33,6 +38,16 @@ public sealed record OverlayCompatibilityUpdate(
     int MappedWindowCount,
     IReadOnlyList<string> Warnings);
 
+public enum OverlayWindowEventKind
+{
+    ForegroundChanged,
+    ZOrderChanged,
+}
+
+public sealed record OverlayWindowEvent(
+    OverlayWindowEventKind Kind,
+    nint WindowHandle);
+
 public interface IOverlayWindowApi
 {
     IReadOnlyList<OverlayWindowSnapshot> EnumerateTopLevelWindows();
@@ -42,6 +57,8 @@ public interface IOverlayWindowApi
     bool SetTopmostWithoutActivation(nint windowHandle, bool topmost);
 
     bool MoveWithoutResizing(nint windowHandle, PixelRect bounds);
+
+    IDisposable ObserveWindowOrderChanges(Action<OverlayWindowEvent> callback);
 }
 
 public interface IOverlayCompatibilityService
@@ -67,6 +84,7 @@ public sealed class OverlayCompatibilitySession
     private readonly List<OverlayWindowState> _windows = [];
     private readonly List<string> _warnings = [];
     private readonly HashSet<string> _warningKeys = new(StringComparer.Ordinal);
+    private int _isActive;
 
     internal OverlayCompatibilitySession(OverlayCompatibilityCaptureRequest request)
     {
@@ -80,27 +98,75 @@ public sealed class OverlayCompatibilitySession
 
     internal List<OverlayWindowState> Windows => _windows;
 
+    internal object SyncRoot { get; } = new();
+
     public nint ScalingWindowHandle { get; internal set; }
+
+    internal int ScalingProcessId { get; set; }
 
     internal PixelRect DestinationRegion { get; set; }
 
-    public bool IsActive { get; internal set; }
+    public bool IsActive
+    {
+        get => Volatile.Read(ref _isActive) != 0;
+        internal set => Volatile.Write(ref _isActive, value ? 1 : 0);
+    }
 
-    public int CapturedWindowCount => _windows.Count;
+    internal bool GameSessionIsForeground { get; set; }
 
-    public int MappedWindowCount => _windows.Count(window => window.WasMapped);
+    internal IDisposable? WindowOrderObserver { get; set; }
 
-    public IReadOnlyList<string> Warnings => _warnings.ToArray();
+    public int CapturedWindowCount
+    {
+        get
+        {
+            lock (SyncRoot)
+            {
+                return _windows.Count;
+            }
+        }
+    }
 
-    public bool TracksWindow(nint windowHandle) =>
-        windowHandle != nint.Zero
-        && _windows.Any(window => window.Identity.Handle == windowHandle);
+    public int MappedWindowCount
+    {
+        get
+        {
+            lock (SyncRoot)
+            {
+                return _windows.Count(window => window.WasMapped);
+            }
+        }
+    }
+
+    public IReadOnlyList<string> Warnings
+    {
+        get
+        {
+            lock (SyncRoot)
+            {
+                return _warnings.ToArray();
+            }
+        }
+    }
+
+    public bool TracksWindow(nint windowHandle)
+    {
+        lock (SyncRoot)
+        {
+            return windowHandle != nint.Zero
+                && _windows.Any(
+                    window => window.Identity.Handle == windowHandle);
+        }
+    }
 
     internal void AddWarning(string key, string message)
     {
-        if (_warningKeys.Add(key))
+        lock (SyncRoot)
         {
-            _warnings.Add(message);
+            if (_warningKeys.Add(key))
+            {
+                _warnings.Add(message);
+            }
         }
     }
 }
@@ -130,6 +196,8 @@ internal sealed class OverlayWindowState
     internal bool PreserveExternalPosition { get; set; }
 
     internal bool IsPromotedByService { get; set; }
+
+    internal long LastPromotionTimestamp { get; set; }
 }
 
 /// <summary>
@@ -150,6 +218,16 @@ public sealed class OverlayCompatibilityService : IOverlayCompatibilityService
         OverlayCompatibilityCaptureRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (request.SourceWindowHandle == nint.Zero)
+        {
+            throw new ArgumentException(
+                "The source window handle is invalid.",
+                nameof(request));
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
+            request.SourceProcessId);
+
         OverlayPlacementPlanner.ValidateRegion(request.SourceRegion, nameof(request));
         OverlayPlacementPlanner.ValidateRegion(request.TargetRegion, nameof(request));
 
@@ -184,6 +262,23 @@ public sealed class OverlayCompatibilityService : IOverlayCompatibilityService
         PixelRect destinationRegion)
     {
         ArgumentNullException.ThrowIfNull(session);
+        lock (session.SyncRoot)
+        {
+            return ActivateLocked(
+                session,
+                scalingWindowHandle,
+                scalingProcessId,
+                destinationRegion);
+        }
+    }
+
+    private OverlayCompatibilityUpdate ActivateLocked(
+        OverlayCompatibilitySession session,
+        nint scalingWindowHandle,
+        int scalingProcessId,
+        PixelRect destinationRegion)
+    {
+        ArgumentNullException.ThrowIfNull(session);
         if (scalingWindowHandle == nint.Zero)
         {
             throw new ArgumentException(
@@ -197,9 +292,11 @@ public sealed class OverlayCompatibilityService : IOverlayCompatibilityService
             nameof(destinationRegion));
 
         session.ScalingWindowHandle = scalingWindowHandle;
+        session.ScalingProcessId = scalingProcessId;
         session.DestinationRegion = destinationRegion;
         session.ExcludedProcessIds.Add(scalingProcessId);
         session.IsActive = true;
+        session.GameSessionIsForeground = true;
 
         foreach (OverlayWindowState window in session.Windows)
         {
@@ -238,6 +335,23 @@ public sealed class OverlayCompatibilityService : IOverlayCompatibilityService
             Promote(session, window);
         }
 
+        try
+        {
+            session.WindowOrderObserver = _windowApi.ObserveWindowOrderChanges(
+                windowEvent => HandleWindowEvent(session, windowEvent));
+        }
+        catch (Exception exception) when (
+            exception is Win32Exception
+                or InvalidOperationException
+                or NotSupportedException)
+        {
+            session.AddWarning(
+                "z-order-observer",
+                "Immediate companion-overlay recovery is unavailable, so the "
+                    + "regular compatibility check will be used instead. "
+                    + exception.Message);
+        }
+
         return CreateUpdate(session);
     }
 
@@ -247,6 +361,22 @@ public sealed class OverlayCompatibilityService : IOverlayCompatibilityService
         bool discoverNewWindows = true)
     {
         ArgumentNullException.ThrowIfNull(session);
+        lock (session.SyncRoot)
+        {
+            return MaintainLocked(
+                session,
+                sourceOrScalingOutputIsForeground,
+                discoverNewWindows);
+        }
+    }
+
+    private OverlayCompatibilityUpdate MaintainLocked(
+        OverlayCompatibilitySession session,
+        bool sourceOrScalingOutputIsForeground,
+        bool discoverNewWindows = true)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        session.GameSessionIsForeground = sourceOrScalingOutputIsForeground;
         if (!session.IsActive || !sourceOrScalingOutputIsForeground)
         {
             if (session.IsActive)
@@ -314,10 +444,29 @@ public sealed class OverlayCompatibilityService : IOverlayCompatibilityService
     public OverlayCompatibilityUpdate Restore(OverlayCompatibilitySession session)
     {
         ArgumentNullException.ThrowIfNull(session);
-        if (!session.IsActive)
+        IDisposable? observer;
+        lock (session.SyncRoot)
         {
-            return CreateUpdate(session);
+            if (!session.IsActive)
+            {
+                return CreateUpdate(session);
+            }
+
+            session.GameSessionIsForeground = false;
+            observer = session.WindowOrderObserver;
+            session.WindowOrderObserver = null;
         }
+
+        observer?.Dispose();
+        lock (session.SyncRoot)
+        {
+            return RestoreLocked(session);
+        }
+    }
+
+    private OverlayCompatibilityUpdate RestoreLocked(
+        OverlayCompatibilitySession session)
+    {
 
         foreach (OverlayWindowState window in session.Windows)
         {
@@ -370,12 +519,17 @@ public sealed class OverlayCompatibilityService : IOverlayCompatibilityService
         OverlayWindowSnapshot snapshot,
         bool allowPositionMapping)
     {
+        bool trustedCompanionProcess = session.Windows.Any(
+            window => window.Identity.ProcessId == snapshot.ProcessId);
+        bool allowTemporaryNonTopmost = trustedCompanionProcess
+            || OverlayPlacementPlanner.IsRecognizedCompanion(snapshot);
         if (session.Windows.Any(window => window.Identity.Handle == snapshot.Handle)
             || !OverlayPlacementPlanner.IsEligible(
                 snapshot,
                 session.Request.TargetRegion,
                 session.ExcludedProcessIds,
-                session.ScalingWindowHandle))
+                session.ScalingWindowHandle,
+                allowTemporaryNonTopmost))
         {
             return;
         }
@@ -399,6 +553,103 @@ public sealed class OverlayCompatibilityService : IOverlayCompatibilityService
         }
 
         window.IsPromotedByService = true;
+        window.LastPromotionTimestamp = Stopwatch.GetTimestamp();
+    }
+
+    private void HandleWindowEvent(
+        OverlayCompatibilitySession session,
+        OverlayWindowEvent windowEvent)
+    {
+        if (windowEvent.WindowHandle == nint.Zero)
+        {
+            return;
+        }
+
+        lock (session.SyncRoot)
+        {
+            if (!session.IsActive)
+            {
+                return;
+            }
+
+            if (windowEvent.Kind == OverlayWindowEventKind.ForegroundChanged)
+            {
+                bool gameSessionIsForeground = IsGameSessionForeground(
+                    session,
+                    windowEvent.WindowHandle);
+                session.GameSessionIsForeground = gameSessionIsForeground;
+                foreach (OverlayWindowState window in session.Windows)
+                {
+                    if (gameSessionIsForeground)
+                    {
+                        Promote(session, window);
+                    }
+                    else
+                    {
+                        Demote(session, window);
+                    }
+                }
+
+                return;
+            }
+
+            if (!session.GameSessionIsForeground)
+            {
+                return;
+            }
+
+            if (windowEvent.WindowHandle == session.ScalingWindowHandle)
+            {
+                foreach (OverlayWindowState window in session.Windows)
+                {
+                    Promote(session, window);
+                }
+
+                return;
+            }
+
+            OverlayWindowState? changedWindow = session.Windows.FirstOrDefault(
+                window => window.Identity.Handle == windowEvent.WindowHandle);
+            if (changedWindow is null)
+            {
+                return;
+            }
+
+            OverlayWindowSnapshot? current = _windowApi.Inspect(
+                changedWindow.Identity.Handle);
+            if (!SameWindow(changedWindow.Identity, current))
+            {
+                return;
+            }
+
+            bool recentlyPromoted = current!.IsTopmost
+                && Stopwatch.GetElapsedTime(
+                    changedWindow.LastPromotionTimestamp) <
+                    TimeSpan.FromMilliseconds(100);
+            if (!recentlyPromoted)
+            {
+                Promote(session, changedWindow);
+            }
+        }
+    }
+
+    private bool IsGameSessionForeground(
+        OverlayCompatibilitySession session,
+        nint windowHandle)
+    {
+        if (windowHandle == session.Request.SourceWindowHandle
+            || windowHandle == session.ScalingWindowHandle
+            || session.TracksWindow(windowHandle))
+        {
+            return true;
+        }
+
+        OverlayWindowSnapshot? foreground = _windowApi.Inspect(windowHandle);
+        return foreground is not null
+            && (foreground.ProcessId == session.Request.SourceProcessId
+                || foreground.ProcessId == session.ScalingProcessId
+                || session.Windows.Any(
+                    window => window.Identity.ProcessId == foreground.ProcessId));
     }
 
     private void Demote(
@@ -515,7 +766,8 @@ public static class OverlayPlacementPlanner
         OverlayWindowSnapshot snapshot,
         PixelRect targetRegion,
         IReadOnlySet<int> excludedProcessIds,
-        nint scalingWindowHandle = default)
+        nint scalingWindowHandle = default,
+        bool allowTemporaryNonTopmost = false)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(excludedProcessIds);
@@ -528,7 +780,7 @@ public static class OverlayPlacementPlanner
             || !snapshot.IsVisible
             || snapshot.IsMinimized
             || !snapshot.IsRootWindow
-            || !snapshot.IsTopmost
+            || (!snapshot.IsTopmost && !allowTemporaryNonTopmost)
             || snapshot.Bounds.Width <= 0
             || snapshot.Bounds.Height <= 0
             || ExcludedClasses.Contains(snapshot.ClassName)
@@ -557,6 +809,29 @@ public static class OverlayPlacementPlanner
         return snapshot.ExecutablePath is null
             || windowsDirectory.Length == 0
             || !IsUnderDirectory(snapshot.ExecutablePath, windowsDirectory);
+    }
+
+    public static bool IsRecognizedCompanion(OverlayWindowSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        string identity = string.Join(
+            ' ',
+            snapshot.Title,
+            snapshot.ClassName,
+            snapshot.ExecutablePath is null
+                ? string.Empty
+                : Path.GetFileNameWithoutExtension(snapshot.ExecutablePath));
+        string[] companionTerms =
+        [
+            "combat tracker",
+            "companion hud",
+            "dps meter",
+            "eqbuddy",
+            "eqlogparser",
+            "loremaster",
+        ];
+        return companionTerms.Any(
+            term => identity.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
     public static bool ShouldMapPosition(PixelRect sourceRegion, PixelRect overlayBounds)
@@ -802,6 +1077,10 @@ internal sealed class NativeOverlayWindowApi : IOverlayWindowApi
                 | NativeMethods.SwpNoActivate
                 | NativeMethods.SwpNoOwnerZOrder);
 
+    public IDisposable ObserveWindowOrderChanges(
+        Action<OverlayWindowEvent> callback) =>
+        new NativeOverlayWindowOrderObserver(callback);
+
     private static string ReadClassName(nint windowHandle)
     {
         char[] buffer = new char[256];
@@ -826,5 +1105,188 @@ internal sealed class NativeOverlayWindowApi : IOverlayWindowApi
             buffer,
             buffer.Length);
         return copied <= 0 ? string.Empty : new string(buffer, 0, copied);
+    }
+}
+
+internal sealed class NativeOverlayWindowOrderObserver : IDisposable
+{
+    private readonly Action<OverlayWindowEvent> _callback;
+    private readonly NativeMethods.WinEventCallback _nativeCallback;
+    private readonly ManualResetEventSlim _started = new(initialState: false);
+    private readonly Thread _observerThread;
+    private Exception? _startupFailure;
+    private uint _observerThreadId;
+    private nint _foregroundHook;
+    private nint _zOrderHook;
+    private int _disposed;
+
+    internal NativeOverlayWindowOrderObserver(
+        Action<OverlayWindowEvent> callback)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        _callback = callback;
+        _nativeCallback = OnWindowEvent;
+        _observerThread = new Thread(RunMessageLoop)
+        {
+            IsBackground = true,
+            Name = "SpinFOURKAYYY overlay z-order observer",
+        };
+        _observerThread.Start();
+        if (!_started.Wait(TimeSpan.FromSeconds(5)))
+        {
+            Dispose();
+            throw new InvalidOperationException(
+                "The companion-overlay z-order observer did not initialize in time.");
+        }
+
+        if (_startupFailure is not null)
+        {
+            Dispose();
+            throw new InvalidOperationException(
+                "Windows could not start companion-overlay z-order monitoring.",
+                _startupFailure);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        uint observerThreadId = _observerThreadId;
+        if (observerThreadId != 0)
+        {
+            _ = NativeMethods.PostThreadMessageW(
+                observerThreadId,
+                NativeMethods.WmQuit,
+                nint.Zero,
+                nint.Zero);
+        }
+
+        bool observerStopped = false;
+        if (Environment.CurrentManagedThreadId != _observerThread.ManagedThreadId)
+        {
+            observerStopped = _observerThread.Join(TimeSpan.FromSeconds(2));
+        }
+
+        if (observerStopped)
+        {
+            _started.Dispose();
+        }
+    }
+
+    private void RunMessageLoop()
+    {
+        try
+        {
+            _observerThreadId = NativeMethods.GetCurrentThreadId();
+            _foregroundHook = NativeMethods.SetWinEventHook(
+                NativeMethods.EventSystemForeground,
+                NativeMethods.EventSystemForeground,
+                nint.Zero,
+                _nativeCallback,
+                0,
+                0,
+                NativeMethods.WineventOutOfContext);
+            _zOrderHook = NativeMethods.SetWinEventHook(
+                NativeMethods.EventObjectReorder,
+                NativeMethods.EventObjectReorder,
+                nint.Zero,
+                _nativeCallback,
+                0,
+                0,
+                NativeMethods.WineventOutOfContext);
+            if (_foregroundHook == nint.Zero || _zOrderHook == nint.Zero)
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Windows rejected a native window-event hook.");
+            }
+
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                return;
+            }
+
+            _started.Set();
+            while (NativeMethods.GetMessageW(
+                out NativeMethods.NativeMessage message,
+                nint.Zero,
+                0,
+                0) > 0)
+            {
+                _ = message;
+            }
+        }
+        catch (Exception exception) when (
+            exception is Win32Exception
+                or InvalidOperationException
+                or NotSupportedException)
+        {
+            _startupFailure = exception;
+            _started.Set();
+        }
+        finally
+        {
+            if (_foregroundHook != nint.Zero)
+            {
+                _ = NativeMethods.UnhookWinEvent(_foregroundHook);
+                _foregroundHook = nint.Zero;
+            }
+
+            if (_zOrderHook != nint.Zero)
+            {
+                _ = NativeMethods.UnhookWinEvent(_zOrderHook);
+                _zOrderHook = nint.Zero;
+            }
+
+            _observerThreadId = 0;
+            _started.Set();
+        }
+    }
+
+    private void OnWindowEvent(
+        nint eventHook,
+        uint eventType,
+        nint windowHandle,
+        int objectId,
+        int childId,
+        uint eventThreadId,
+        uint eventTime)
+    {
+        _ = eventHook;
+        _ = objectId;
+        _ = childId;
+        _ = eventThreadId;
+        _ = eventTime;
+        if (Volatile.Read(ref _disposed) != 0 || windowHandle == nint.Zero)
+        {
+            return;
+        }
+
+        OverlayWindowEventKind? kind = eventType switch
+        {
+            NativeMethods.EventSystemForeground =>
+                OverlayWindowEventKind.ForegroundChanged,
+            NativeMethods.EventObjectReorder =>
+                OverlayWindowEventKind.ZOrderChanged,
+            _ => null,
+        };
+        if (kind is not null)
+        {
+            try
+            {
+                _callback(new OverlayWindowEvent(kind.Value, windowHandle));
+            }
+            catch (Exception exception) when (
+                exception is Win32Exception
+                    or InvalidOperationException
+                    or NotSupportedException)
+            {
+                // Native accessibility callbacks must never unwind through user32.
+            }
+        }
     }
 }
