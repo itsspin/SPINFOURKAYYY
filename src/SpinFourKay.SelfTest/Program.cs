@@ -125,6 +125,12 @@ internal static class Program
         runner.Add(
             "Windows / overlay promotion, discovery, and exact restoration",
             OverlayCompatibilityLifecycle);
+        runner.Add(
+            "Windows / overlay event recovery defeats topmost races",
+            OverlayCompatibilityEventRecovery);
+        runner.Add(
+            "Windows / native overlay observer lifecycle",
+            NativeOverlayObserverLifecycle);
         runner.Add("Journal / save, update, active order, restored", JournalLifecycleAsync);
         runner.Add(
             "Journal / legacy prepared geometry remains exact",
@@ -2950,6 +2956,20 @@ internal static class Program
                 loremaster with { IsTopmost = false },
                 target,
                 excluded));
+        Assert.True(
+            OverlayPlacementPlanner.IsEligible(
+                loremaster with { IsTopmost = false },
+                target,
+                excluded,
+                allowTemporaryNonTopmost: true));
+        Assert.True(OverlayPlacementPlanner.IsRecognizedCompanion(loremaster));
+        Assert.False(
+            OverlayPlacementPlanner.IsRecognizedCompanion(
+                loremaster with
+                {
+                    Title = "Notes",
+                    ExecutablePath = @"C:\Tools\Utility.exe",
+                }));
         Assert.False(
             OverlayPlacementPlanner.IsEligible(
                 loremaster with { ProcessId = 9001 },
@@ -3013,12 +3033,16 @@ internal static class Program
             new PixelRect(700, 400, 600, 400)) with
         {
             IsTopmost = false,
+            Title = "Ordinary utility",
+            ExecutablePath = @"C:\Tools\Utility.exe",
         };
         FakeOverlayWindowApi windowApi = new(first, second, ordinaryWindow);
         OverlayCompatibilityService service = new(windowApi);
         OverlayCompatibilitySession session = service.Capture(
             new OverlayCompatibilityCaptureRequest
             {
+                SourceWindowHandle = new nint(9001),
+                SourceProcessId = 9001,
                 SourceRegion = source,
                 TargetRegion = target,
                 ExcludedProcessIds = new HashSet<int> { 9001, 9002 },
@@ -3085,6 +3109,104 @@ internal static class Program
                 new nint(999),
                 scalingProcessId: 0,
                 target));
+    }
+
+    private static void OverlayCompatibilityEventRecovery()
+    {
+        PixelRect target = new(0, 0, 3840, 2160);
+        PixelRect source = new(320, 180, 3200, 1800);
+        nint sourceWindow = new(9001);
+        nint scalingWindow = new(9002);
+        OverlayWindowSnapshot loremaster = CreateOverlaySnapshot(
+            new nint(201),
+            processId: 2101,
+            new PixelRect(3200, 1880, 300, 100),
+            executablePath: @"C:\Users\Player\SpinsLoremaster\Loremaster.exe")
+            with
+            {
+                IsTopmost = false,
+                Title = "Loremaster",
+            };
+        OverlayWindowSnapshot ordinaryWindow = CreateOverlaySnapshot(
+            new nint(202),
+            processId: 2102,
+            new PixelRect(800, 400, 500, 300),
+            executablePath: @"C:\Tools\Utility.exe") with
+        {
+            IsTopmost = false,
+            Title = "Ordinary utility",
+        };
+        OverlayWindowSnapshot alternateScalingWindow = CreateOverlaySnapshot(
+            new nint(9003),
+            processId: 9002,
+            new PixelRect(0, 0, 40, 40),
+            executablePath: @"C:\Runtime\Magpie.exe");
+        FakeOverlayWindowApi windowApi = new(
+            loremaster,
+            ordinaryWindow,
+            alternateScalingWindow);
+        OverlayCompatibilityService service = new(windowApi);
+        OverlayCompatibilitySession session = service.Capture(
+            new OverlayCompatibilityCaptureRequest
+            {
+                SourceWindowHandle = sourceWindow,
+                SourceProcessId = 9001,
+                SourceRegion = source,
+                TargetRegion = target,
+                ExcludedProcessIds = new HashSet<int> { 9001, 9002 },
+            });
+        Assert.Equal(1, session.CapturedWindowCount);
+
+        _ = service.Activate(
+            session,
+            scalingWindow,
+            scalingProcessId: 9002,
+            target);
+        Assert.True(windowApi.Inspect(loremaster.Handle)!.IsTopmost);
+        Assert.Equal(1, windowApi.TopmostRequests.Count);
+
+        windowApi.SetSnapshot(
+            windowApi.Inspect(loremaster.Handle)! with { IsTopmost = false });
+        windowApi.RaiseWindowEvent(
+            new OverlayWindowEvent(
+                OverlayWindowEventKind.ZOrderChanged,
+                loremaster.Handle));
+        Assert.True(windowApi.Inspect(loremaster.Handle)!.IsTopmost);
+        Assert.Equal(2, windowApi.TopmostRequests.Count);
+
+        windowApi.RaiseWindowEvent(
+            new OverlayWindowEvent(
+                OverlayWindowEventKind.ZOrderChanged,
+                scalingWindow));
+        Assert.Equal(3, windowApi.TopmostRequests.Count);
+
+        windowApi.RaiseWindowEvent(
+            new OverlayWindowEvent(
+                OverlayWindowEventKind.ForegroundChanged,
+                new nint(9999)));
+        Assert.False(windowApi.Inspect(loremaster.Handle)!.IsTopmost);
+        windowApi.RaiseWindowEvent(
+            new OverlayWindowEvent(
+                OverlayWindowEventKind.ForegroundChanged,
+                alternateScalingWindow.Handle));
+        Assert.True(windowApi.Inspect(loremaster.Handle)!.IsTopmost);
+
+        int requestCountBeforeRestore = windowApi.TopmostRequests.Count;
+        _ = service.Restore(session);
+        Assert.True(windowApi.ObserverDisposed);
+        Assert.False(windowApi.Inspect(loremaster.Handle)!.IsTopmost);
+        windowApi.RaiseWindowEvent(
+            new OverlayWindowEvent(
+                OverlayWindowEventKind.ZOrderChanged,
+                loremaster.Handle));
+        Assert.Equal(
+            requestCountBeforeRestore + 1,
+            windowApi.TopmostRequests.Count);
+    }
+
+    private static void NativeOverlayObserverLifecycle()
+    {
+        using NativeOverlayWindowOrderObserver observer = new(_ => { });
     }
 
     private static OverlayWindowSnapshot CreateOverlaySnapshot(
@@ -8362,6 +8484,7 @@ internal sealed class FakeProcessDiscoveryService : IProcessDiscoveryService
 internal sealed class FakeOverlayWindowApi : IOverlayWindowApi
 {
     private readonly Dictionary<nint, OverlayWindowSnapshot> _windows = [];
+    private Action<OverlayWindowEvent>? _windowEventCallback;
 
     public FakeOverlayWindowApi(params OverlayWindowSnapshot[] windows)
     {
@@ -8374,6 +8497,8 @@ internal sealed class FakeOverlayWindowApi : IOverlayWindowApi
     public List<(nint Handle, bool Topmost)> TopmostRequests { get; } = [];
 
     public List<(nint Handle, PixelRect Bounds)> MoveRequests { get; } = [];
+
+    public bool ObserverDisposed { get; private set; }
 
     public IReadOnlyList<OverlayWindowSnapshot> EnumerateTopLevelWindows() =>
         _windows.Values.ToArray();
@@ -8411,9 +8536,36 @@ internal sealed class FakeOverlayWindowApi : IOverlayWindowApi
         return true;
     }
 
+    public IDisposable ObserveWindowOrderChanges(
+        Action<OverlayWindowEvent> callback)
+    {
+        _windowEventCallback = callback;
+        ObserverDisposed = false;
+        return new CallbackDisposable(() =>
+        {
+            _windowEventCallback = null;
+            ObserverDisposed = true;
+        });
+    }
+
+    public void RaiseWindowEvent(OverlayWindowEvent windowEvent)
+    {
+        _windowEventCallback?.Invoke(windowEvent);
+    }
+
     public void SetSnapshot(OverlayWindowSnapshot snapshot)
     {
         _windows[snapshot.Handle] = snapshot;
+    }
+
+    private sealed class CallbackDisposable(Action callback) : IDisposable
+    {
+        private Action? _callback = callback;
+
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref _callback, null)?.Invoke();
+        }
     }
 }
 

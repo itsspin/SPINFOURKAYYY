@@ -11,6 +11,7 @@ internal static class NativeMethods
     internal const uint MonitorDefaultToPrimary = 1;
     internal const int SwRestore = 9;
     internal const uint WmClose = 0x0010;
+    internal const uint WmQuit = 0x0012;
     internal static readonly nint HwndBroadcast = new(0xFFFF);
     internal const int GwlStyle = -16;
     internal const int GwlExStyle = -20;
@@ -20,6 +21,9 @@ internal static class NativeMethods
     internal const uint SwpNoActivate = 0x0010;
     internal const uint SwpNoOwnerZOrder = 0x0200;
     internal const uint SwpFrameChanged = 0x0020;
+    internal const uint EventSystemForeground = 0x0003;
+    internal const uint EventObjectReorder = 0x8004;
+    internal const uint WineventOutOfContext = 0x0000;
     internal const uint WsExTopmost = 0x00000008;
     internal const uint WsExTransparent = 0x00000020;
     internal const uint WsExToolWindow = 0x00000080;
@@ -29,6 +33,14 @@ internal static class NativeMethods
     internal static readonly nint HwndNotTopmost = new(-2);
 
     internal delegate bool EnumWindowsCallback(nint windowHandle, nint parameter);
+    internal delegate void WinEventCallback(
+        nint eventHook,
+        uint eventType,
+        nint windowHandle,
+        int objectId,
+        int childId,
+        uint eventThreadId,
+        uint eventTime);
     internal delegate bool MonitorEnumCallback(
         nint monitorHandle,
         nint monitorDeviceContext,
@@ -143,6 +155,38 @@ internal static class NativeMethods
         int height,
         uint flags);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern nint SetWinEventHook(
+        uint eventMinimum,
+        uint eventMaximum,
+        nint eventHookModule,
+        WinEventCallback callback,
+        uint processId,
+        uint threadId,
+        uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool UnhookWinEvent(nint eventHook);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PostThreadMessageW(
+        uint threadId,
+        uint message,
+        nint wParam,
+        nint lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern int GetMessageW(
+        out NativeMessage message,
+        nint windowHandle,
+        uint messageFilterMinimum,
+        uint messageFilterMaximum);
+
+    [DllImport("kernel32.dll")]
+    internal static extern uint GetCurrentThreadId();
+
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     internal static extern nint GetWindowLongPtr64(nint windowHandle, int index);
 
@@ -205,6 +249,18 @@ internal static class NativeMethods
         internal int Top;
         internal int Right;
         internal int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeMessage
+    {
+        internal nint WindowHandle;
+        internal uint Message;
+        internal nuint WParam;
+        internal nint LParam;
+        internal uint Time;
+        internal NativePoint Point;
+        internal uint Private;
     }
 
     [StructLayout(LayoutKind.Sequential)]

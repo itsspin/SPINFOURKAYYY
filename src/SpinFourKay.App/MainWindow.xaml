@@ -742,7 +742,7 @@
                                                    FontSize="11"
                                                    Foreground="{StaticResource MutedTextBrush}"
                                                    TextWrapping="Wrap"
-                                                   Text="Keeps existing always-on-top DPS meters and companion HUDs above the scaled game. Their windows are repositioned without resizing, so overlay text stays native-sharp; unchanged placements return when scaling stops." />
+                                                   Text="Keeps DPS meters and companion HUDs above the scaled game, even if they briefly drop their topmost state during fullscreen handoff. Their windows are repositioned without resizing, so overlay text stays native-sharp; unchanged placements return when scaling stops." />
                                     </StackPanel>
                                     <CheckBox x:Name="OverlayCompatibilityCheckBox"
                                               Grid.Column="1"
