@@ -119,6 +119,12 @@ internal static class Program
         runner.Add(
             "Windows / physical-monitor client placement planner",
             PhysicalMonitorClientPlacementPlanner);
+        runner.Add(
+            "Windows / native-size overlay placement and filtering",
+            OverlayPlacementAndFiltering);
+        runner.Add(
+            "Windows / overlay promotion, discovery, and exact restoration",
+            OverlayCompatibilityLifecycle);
         runner.Add("Journal / save, update, active order, restored", JournalLifecycleAsync);
         runner.Add(
             "Journal / legacy prepared geometry remains exact",
@@ -185,6 +191,9 @@ internal static class Program
         runner.Add(
             "Launch / exact startup attachment succeeds without cleanup",
             LaunchExactAttachmentSucceedsWithoutCleanupAsync);
+        runner.Add(
+            "Launch / overlay compatibility activates after safe attachment",
+            LaunchOverlayCompatibilityActivatesAfterSafeAttachmentAsync);
         runner.Add(
             "Live scale / strict and Exact-pixel requests reject before effects",
             LiveScaleStrictAndNearestRejectBeforeEffectsAsync);
@@ -2885,6 +2894,219 @@ internal static class Program
                 frame with { Top = -1 }));
     }
 
+    private static void OverlayPlacementAndFiltering()
+    {
+        PixelRect target = new(0, 0, 3840, 2160);
+        PixelRect source = new(320, 180, 3200, 1800);
+        PixelRect rightBottom = new(3200, 1880, 300, 100);
+        PixelRect mappedRightBottom = OverlayPlacementPlanner.MapNativeSize(
+            source,
+            target,
+            rightBottom);
+        Assert.Equal(
+            new PixelRect(3516, 2060, 300, 100),
+            mappedRightBottom);
+        Assert.Equal(rightBottom.Width, mappedRightBottom.Width);
+        Assert.Equal(rightBottom.Height, mappedRightBottom.Height);
+
+        Assert.Equal(
+            new PixelRect(24, 24, 300, 100),
+            OverlayPlacementPlanner.MapNativeSize(
+                source,
+                target,
+                new PixelRect(340, 200, 300, 100)));
+        Assert.Equal(
+            new PixelRect(1770, 1030, 300, 100),
+            OverlayPlacementPlanner.MapNativeSize(
+                source,
+                target,
+                new PixelRect(1770, 1030, 300, 100)));
+        Assert.Equal(
+            new PixelRect(0, 0, 500, 200),
+            OverlayPlacementPlanner.MapNativeSize(
+                source,
+                target,
+                new PixelRect(-200, -100, 500, 200)));
+
+        Assert.True(OverlayPlacementPlanner.ShouldMapPosition(source, rightBottom));
+        Assert.False(
+            OverlayPlacementPlanner.ShouldMapPosition(
+                source,
+                new PixelRect(0, 0, 100, 100)));
+
+        OverlayWindowSnapshot loremaster = CreateOverlaySnapshot(
+            new nint(101),
+            processId: 2001,
+            rightBottom,
+            executablePath: @"C:\Users\Player\SpinsLoremaster\Loremaster.exe");
+        HashSet<int> excluded = [9001, 9002];
+        Assert.True(
+            OverlayPlacementPlanner.IsEligible(
+                loremaster,
+                target,
+                excluded));
+        Assert.False(
+            OverlayPlacementPlanner.IsEligible(
+                loremaster with { IsTopmost = false },
+                target,
+                excluded));
+        Assert.False(
+            OverlayPlacementPlanner.IsEligible(
+                loremaster with { ProcessId = 9001 },
+                target,
+                excluded));
+        Assert.False(
+            OverlayPlacementPlanner.IsEligible(
+                loremaster with { ClassName = "Shell_TrayWnd" },
+                target,
+                excluded));
+        Assert.False(
+            OverlayPlacementPlanner.IsEligible(
+                loremaster with
+                {
+                    ExecutablePath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                        "System32",
+                        "system-overlay.exe"),
+                },
+                target,
+                excluded));
+        Assert.False(
+            OverlayPlacementPlanner.IsEligible(
+                loremaster with { Bounds = new PixelRect(0, 0, 3840, 2160) },
+                target,
+                excluded));
+        Assert.False(
+            OverlayPlacementPlanner.IsEligible(
+                loremaster with { Bounds = new PixelRect(5000, 0, 200, 100) },
+                target,
+                excluded));
+        Assert.False(
+            OverlayPlacementPlanner.IsEligible(
+                loremaster,
+                target,
+                excluded,
+                scalingWindowHandle: loremaster.Handle));
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => OverlayPlacementPlanner.MapNativeSize(
+                new PixelRect(0, 0, 0, 100),
+                target,
+                rightBottom));
+    }
+
+    private static void OverlayCompatibilityLifecycle()
+    {
+        PixelRect target = new(0, 0, 3840, 2160);
+        PixelRect source = new(320, 180, 3200, 1800);
+        OverlayWindowSnapshot first = CreateOverlaySnapshot(
+            new nint(101),
+            processId: 2001,
+            new PixelRect(3200, 1880, 300, 100));
+        OverlayWindowSnapshot second = CreateOverlaySnapshot(
+            new nint(102),
+            processId: 2002,
+            new PixelRect(340, 200, 220, 90));
+        OverlayWindowSnapshot ordinaryWindow = CreateOverlaySnapshot(
+            new nint(103),
+            processId: 2003,
+            new PixelRect(700, 400, 600, 400)) with
+        {
+            IsTopmost = false,
+        };
+        FakeOverlayWindowApi windowApi = new(first, second, ordinaryWindow);
+        OverlayCompatibilityService service = new(windowApi);
+        OverlayCompatibilitySession session = service.Capture(
+            new OverlayCompatibilityCaptureRequest
+            {
+                SourceRegion = source,
+                TargetRegion = target,
+                ExcludedProcessIds = new HashSet<int> { 9001, 9002 },
+            });
+        Assert.Equal(2, session.CapturedWindowCount);
+        Assert.False(session.IsActive);
+
+        OverlayCompatibilityUpdate activated = service.Activate(
+            session,
+            scalingWindowHandle: new nint(999),
+            scalingProcessId: 9002,
+            target);
+        Assert.True(session.IsActive);
+        Assert.Equal(2, activated.TrackedWindowCount);
+        Assert.Equal(2, activated.MappedWindowCount);
+        Assert.Equal(2, windowApi.MoveRequests.Count);
+        Assert.Equal(2, windowApi.TopmostRequests.Count);
+        Assert.Equal(
+            new PixelRect(3516, 2060, 300, 100),
+            windowApi.Inspect(first.Handle)!.Bounds);
+        Assert.Equal(first.Bounds.Width, windowApi.Inspect(first.Handle)!.Bounds.Width);
+
+        _ = service.Maintain(
+            session,
+            sourceOrScalingOutputIsForeground: false);
+        Assert.Equal(4, windowApi.TopmostRequests.Count);
+        Assert.False(windowApi.TopmostRequests[^1].Topmost);
+
+        PixelRect externallyMoved = new(3400, 1850, 300, 100);
+        windowApi.SetSnapshot(
+            windowApi.Inspect(first.Handle)! with
+            {
+                Bounds = externallyMoved,
+                IsTopmost = false,
+            });
+        OverlayWindowSnapshot lateOverlay = CreateOverlaySnapshot(
+            new nint(104),
+            processId: 2004,
+            new PixelRect(1500, 100, 240, 80));
+        windowApi.SetSnapshot(lateOverlay);
+
+        OverlayCompatibilityUpdate maintained = service.Maintain(
+            session,
+            sourceOrScalingOutputIsForeground: true);
+        Assert.Equal(3, maintained.TrackedWindowCount);
+        Assert.Equal(2, maintained.MappedWindowCount);
+        Assert.Equal(7, windowApi.TopmostRequests.Count);
+        Assert.True(windowApi.TopmostRequests[^1].Topmost);
+        Assert.Equal(lateOverlay.Bounds, windowApi.Inspect(lateOverlay.Handle)!.Bounds);
+        Assert.True(session.TracksWindow(lateOverlay.Handle));
+
+        OverlayCompatibilityUpdate restored = service.Restore(session);
+        Assert.False(session.IsActive);
+        Assert.Empty(restored.Warnings);
+        Assert.Equal(externallyMoved, windowApi.Inspect(first.Handle)!.Bounds);
+        Assert.Equal(second.Bounds, windowApi.Inspect(second.Handle)!.Bounds);
+        Assert.Equal(3, windowApi.MoveRequests.Count);
+
+        _ = service.Restore(session);
+        Assert.Equal(3, windowApi.MoveRequests.Count);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => service.Activate(
+                session,
+                new nint(999),
+                scalingProcessId: 0,
+                target));
+    }
+
+    private static OverlayWindowSnapshot CreateOverlaySnapshot(
+        nint handle,
+        int processId,
+        PixelRect bounds,
+        string executablePath = @"C:\Tools\Overlay.exe") =>
+        new(
+            handle,
+            processId,
+            "OverlayWindow",
+            "Companion HUD",
+            executablePath,
+            bounds,
+            IsVisible: true,
+            IsMinimized: false,
+            IsRootWindow: true,
+            IsTopmost: true,
+            IsToolWindow: true,
+            IsLayered: true,
+            IsInputTransparent: false);
+
     private static async Task WindowDiscoveryValidationAsync()
     {
         WindowDiscoveryService service = new();
@@ -5447,6 +5669,70 @@ internal static class Program
         }
     }
 
+    private static async Task LaunchOverlayCompatibilityActivatesAfterSafeAttachmentAsync()
+    {
+        await using TempDirectory temp = new();
+        FakeClientFixture client = await FakeClientFixture.CreateAsync(temp.Path)
+            .ConfigureAwait(false);
+        int ownedProcessId = Environment.ProcessId;
+        WindowDescriptor sourceWindow = CreateLaunchAcceptanceSourceWindow(
+            client,
+            ownedProcessId);
+        MagpieScalingWindowInspection exact =
+            CreateExactSafeScalingInspection(
+                ownedProcessId,
+                sourceWindow.Handle,
+                new PixelSize(1920, 1080),
+                new PixelRect(0, 0, 3840, 2160));
+        PixelRect originalOverlayBounds = new(1600, 900, 260, 80);
+        OverlayWindowSnapshot overlay = CreateOverlaySnapshot(
+            new nint(701),
+            processId: ownedProcessId + 100,
+            originalOverlayBounds);
+        FakeOverlayWindowApi overlayWindows = new(overlay);
+        OverlayCompatibilityService overlayCompatibility = new(overlayWindows);
+        LaunchAcceptanceHarness harness =
+            CreateLaunchAcceptanceHarness(
+                client,
+                sourceWindow,
+                exact,
+                overlayCompatibility);
+
+        FourKayLaunchResult? result = null;
+        try
+        {
+            result = await harness.Service.AttachExistingAsync(
+                harness.Request with
+                {
+                    MaintainTopmostOverlays = true,
+                }).ConfigureAwait(false);
+
+            OverlayCompatibilitySession session = result.OverlayCompatibility
+                ?? throw new TestFailureException(
+                    "The verified launch did not retain its overlay session.");
+            Assert.True(session.IsActive);
+            Assert.Equal(1, session.CapturedWindowCount);
+            Assert.Equal(1, session.MappedWindowCount);
+            Assert.Equal(1, overlayWindows.TopmostRequests.Count);
+            Assert.Equal(1, overlayWindows.MoveRequests.Count);
+            Assert.True(
+                overlayWindows.Inspect(overlay.Handle)!.Bounds
+                    != originalOverlayBounds);
+
+            _ = overlayCompatibility.Restore(session);
+            Assert.Equal(
+                originalOverlayBounds,
+                overlayWindows.Inspect(overlay.Handle)!.Bounds);
+            Assert.False(session.IsActive);
+        }
+        finally
+        {
+            result?.LauncherProcess?.Dispose();
+            result?.GameProcess.Dispose();
+            result?.MagpieProcess.Process.Dispose();
+        }
+    }
+
     private static async Task LiveScaleStrictAndNearestRejectBeforeEffectsAsync()
     {
         await using TempDirectory temp = new();
@@ -7334,7 +7620,8 @@ internal static class Program
     private static LaunchAcceptanceHarness CreateLaunchAcceptanceHarness(
         FakeClientFixture client,
         WindowDescriptor sourceWindow,
-        MagpieScalingWindowInspection waitResult)
+        MagpieScalingWindowInspection waitResult,
+        IOverlayCompatibilityService? overlayCompatibility = null)
     {
         FakeProcessDiscoveryService processes = new()
         {
@@ -7379,7 +7666,8 @@ internal static class Program
             placement,
             config,
             magpie,
-            inspector);
+            inspector,
+            overlayCompatibility: overlayCompatibility);
         FourKayAttachRequest request = new()
         {
             EqDirectory = client.EqDirectory,
@@ -8068,6 +8356,64 @@ internal sealed class FakeProcessDiscoveryService : IProcessDiscoveryService
             ? Task.FromResult(Current[0])
             : Task.FromException<ProcessDescriptor>(
                 new TimeoutException("The fake has no running process."));
+    }
+}
+
+internal sealed class FakeOverlayWindowApi : IOverlayWindowApi
+{
+    private readonly Dictionary<nint, OverlayWindowSnapshot> _windows = [];
+
+    public FakeOverlayWindowApi(params OverlayWindowSnapshot[] windows)
+    {
+        foreach (OverlayWindowSnapshot window in windows)
+        {
+            SetSnapshot(window);
+        }
+    }
+
+    public List<(nint Handle, bool Topmost)> TopmostRequests { get; } = [];
+
+    public List<(nint Handle, PixelRect Bounds)> MoveRequests { get; } = [];
+
+    public IReadOnlyList<OverlayWindowSnapshot> EnumerateTopLevelWindows() =>
+        _windows.Values.ToArray();
+
+    public OverlayWindowSnapshot? Inspect(nint windowHandle) =>
+        _windows.TryGetValue(windowHandle, out OverlayWindowSnapshot? snapshot)
+            ? snapshot
+            : null;
+
+    public bool SetTopmostWithoutActivation(nint windowHandle, bool topmost)
+    {
+        if (!_windows.TryGetValue(
+            windowHandle,
+            out OverlayWindowSnapshot? snapshot))
+        {
+            return false;
+        }
+
+        TopmostRequests.Add((windowHandle, topmost));
+        _windows[windowHandle] = snapshot with { IsTopmost = topmost };
+        return true;
+    }
+
+    public bool MoveWithoutResizing(nint windowHandle, PixelRect bounds)
+    {
+        if (!_windows.TryGetValue(
+            windowHandle,
+            out OverlayWindowSnapshot? snapshot))
+        {
+            return false;
+        }
+
+        MoveRequests.Add((windowHandle, bounds));
+        _windows[windowHandle] = snapshot with { Bounds = bounds };
+        return true;
+    }
+
+    public void SetSnapshot(OverlayWindowSnapshot snapshot)
+    {
+        _windows[snapshot.Handle] = snapshot;
     }
 }
 

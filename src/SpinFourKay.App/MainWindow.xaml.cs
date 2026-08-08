@@ -27,7 +27,8 @@ public partial class MainWindow : Window, IDisposable
     private readonly SpinUiResolutionPlanner _spinUiResolutionPlanner = new();
     private readonly WindowPlacementService _windowPlacement = new();
     private readonly FourKayPreparationService _preparationService = new();
-    private readonly FourKayLaunchService _launchService = new();
+    private readonly OverlayCompatibilityService _overlayCompatibility = new();
+    private readonly FourKayLaunchService _launchService;
     private readonly FourKayJournalStore _journalStore = new();
     private readonly UiLayoutProfileService _layoutProfileService = new();
     private readonly MagpieScalingWindowInspector _scalingInspector = new();
@@ -39,9 +40,12 @@ public partial class MainWindow : Window, IDisposable
     private readonly long _supervisionTimestampOrigin =
         Stopwatch.GetTimestamp();
     private readonly DispatcherTimer _scalingHealthTimer;
+    private readonly DispatcherTimer _overlayCompatibilityTimer;
     private readonly DispatcherTimer _liveScaleDebounceTimer;
     private readonly DispatcherTimer _clarityDebounceTimer;
     private bool _clarityReapplyPending;
+    private int _overlayCompatibilityTickCount;
+    private int _displayedOverlayWarningCount;
     private CancellationTokenSource? _operationCancellation;
     private DisplaySnapshot? _display;
     private ResolutionPlan? _currentPlan;
@@ -92,6 +96,8 @@ public partial class MainWindow : Window, IDisposable
 
     public MainWindow()
     {
+        _launchService = new FourKayLaunchService(
+            overlayCompatibility: _overlayCompatibility);
         InitializeComponent();
 
         _scalingHealthTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -99,6 +105,12 @@ public partial class MainWindow : Window, IDisposable
             Interval = TimeSpan.FromSeconds(1.5),
         };
         _scalingHealthTimer.Tick += ScalingHealthTimer_Tick;
+        _overlayCompatibilityTimer = new DispatcherTimer(
+            DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(250),
+        };
+        _overlayCompatibilityTimer.Tick += OverlayCompatibilityTimer_Tick;
         _liveScaleDebounceTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(450),
@@ -131,6 +143,7 @@ public partial class MainWindow : Window, IDisposable
         await LoadScaleAwareLayoutStateAsync().ConfigureAwait(true);
         RefreshActionAvailability();
         _scalingHealthTimer.Start();
+        _overlayCompatibilityTimer.Start();
         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         DetectRunningGameAtStartup();
     }
@@ -1082,6 +1095,7 @@ public partial class MainWindow : Window, IDisposable
 
         _isCloseCleanupRunning = true;
         _scalingHealthTimer.Stop();
+        _overlayCompatibilityTimer.Stop();
         _liveScaleDebounceTimer.Stop();
         _pendingLiveScale = null;
         _clarityDebounceTimer.Stop();
@@ -1142,6 +1156,7 @@ public partial class MainWindow : Window, IDisposable
             OperationProgressBar.IsIndeterminate = false;
             OperationProgressBar.Value = _isScaledSessionActive ? 100 : 0;
             _scalingHealthTimer.Start();
+            _overlayCompatibilityTimer.Start();
             SetStatus(
                 StatusTone.Error,
                 "CLOSE BLOCKED — FINISHING SAFELY",
@@ -1167,17 +1182,54 @@ public partial class MainWindow : Window, IDisposable
     {
         _scalingHealthTimer.Stop();
         _scalingHealthTimer.Tick -= ScalingHealthTimer_Tick;
+        _overlayCompatibilityTimer.Stop();
+        _overlayCompatibilityTimer.Tick -= OverlayCompatibilityTimer_Tick;
         _liveScaleDebounceTimer.Stop();
         _liveScaleDebounceTimer.Tick -= LiveScaleDebounceTimer_Tick;
         _clarityDebounceTimer.Stop();
         _clarityDebounceTimer.Tick -= ClarityDebounceTimer_Tick;
         _operationCancellation?.Dispose();
         _operationCancellation = null;
+        RestoreOverlayCompatibility(_activeLaunch);
         DisposeLaunchHandles(_activeLaunch);
         _activeLaunch = null;
         _pendingScalingCleanupLease?.Dispose();
         _pendingScalingCleanupLease = null;
         GC.SuppressFinalize(this);
+    }
+
+    private void OverlayCompatibilityTimer_Tick(object? sender, EventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (_activeLaunch is not { OverlayCompatibility: { IsActive: true } overlays }
+            || (!_isScaledSessionActive && !_scalingCleanupRequired))
+        {
+            return;
+        }
+
+        nint foregroundWindow = _foregroundWindow.GetForegroundWindowHandle();
+        bool gameSessionIsForeground =
+            foregroundWindow == _activeLaunch.SourceWindow.Handle
+            || foregroundWindow == overlays.ScalingWindowHandle
+            || overlays.TracksWindow(foregroundWindow);
+        OverlayCompatibilityUpdate update = _overlayCompatibility.Maintain(
+            overlays,
+            gameSessionIsForeground,
+            discoverNewWindows:
+                ++_overlayCompatibilityTickCount % 8 == 0);
+        if (update.Warnings.Count > _displayedOverlayWarningCount)
+        {
+            string[] newWarnings = update.Warnings
+                .Skip(_displayedOverlayWarningCount)
+                .ToArray();
+            _displayedOverlayWarningCount = update.Warnings.Count;
+            SetStatus(
+                StatusTone.Warning,
+                "OVERLAY COMPATIBILITY NOTE",
+                string.Join(" ", newWarnings)
+                    + " Fullscreen scaling and its verified mouse map remain active.");
+        }
     }
 
     private async void ScalingHealthTimer_Tick(object? sender, EventArgs e)
@@ -2426,6 +2478,7 @@ public partial class MainWindow : Window, IDisposable
                             + MagpiePortableConfigService
                                 .ReadableScaleComparisonTolerance
                         >= MagpiePortableConfigService.ReadableNisMinimumScale));
+        OverlayCompatibilityCheckBox.IsEnabled = configurationAvailable;
         SpinUiLayoutReadyCheckBox.IsEnabled =
             controlsAvailable
             && UsesStrictSpinUiMode
@@ -2717,6 +2770,8 @@ public partial class MainWindow : Window, IDisposable
                     ScalingTimeout = TimeSpan.FromSeconds(20),
                     RcasSharpness = SelectedClaritySharpness(),
                     AntiAliasing = SelectedAntiAliasing(),
+                    MaintainTopmostOverlays =
+                        OverlayCompatibilityCheckBox.IsChecked == true,
                 },
                 cancellationToken).ConfigureAwait(true);
 
@@ -2731,12 +2786,25 @@ public partial class MainWindow : Window, IDisposable
             PipelineSourceText.Text = FormatPixels(source);
             PipelineTargetText.Text = FormatPixels(target);
             PipelineScaleText.Text = $"{activeScale:0.##}x PREPARED";
+            int overlayCount =
+                result.OverlayCompatibility?.CapturedWindowCount ?? 0;
+            string overlayMessage = result.OverlayCompatibility is null
+                ? string.Empty
+                : overlayCount > 0
+                    ? $" {overlayCount} existing companion overlay "
+                        + (overlayCount == 1
+                            ? "window remains native-sized and is kept"
+                            : "windows remain native-sized and are kept")
+                        + " above the game while you play."
+                    : " Companion-overlay monitoring is active for always-on-top "
+                        + "HUDs opened during play.";
             SetScaledSessionState(
                 active: true,
                 $"The managed {FormatPixels(source)} EverQuest window now fills "
                     + $"{FormatPixels(target)} at {activeScale:0.##}x. The source "
                     + "window is normal (not maximized), and the physical mouse map "
-                    + "passed validation.",
+                    + "passed validation."
+                    + overlayMessage,
                 result.Warnings);
         }
         catch
@@ -3076,6 +3144,13 @@ public partial class MainWindow : Window, IDisposable
 
     private void CompleteScalingOwnership(string message)
     {
+        string[] overlayWarnings =
+            RestoreOverlayCompatibility(_activeLaunch);
+        if (overlayWarnings.Length > 0)
+        {
+            message += " Overlay note: " + string.Join(" ", overlayWarnings);
+        }
+
         DisposeLaunchHandles(_activeLaunch);
         _activeLaunch = null;
         _pendingScalingCleanupLease?.Dispose();
@@ -3086,6 +3161,8 @@ public partial class MainWindow : Window, IDisposable
         _clarityDebounceTimer.Stop();
         _clarityReapplyPending = false;
         _isScaledSessionActive = false;
+        _overlayCompatibilityTickCount = 0;
+        _displayedOverlayWarningCount = 0;
         ResetSessionUiConfirmations();
         RefreshDisplayAndPlan();
         SetScaledSessionState(active: false, message: message);
@@ -3435,8 +3512,25 @@ public partial class MainWindow : Window, IDisposable
     private void ReplaceActiveLaunch(FourKayLaunchResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
+        _ = RestoreOverlayCompatibility(_activeLaunch);
         DisposeLaunchHandles(_activeLaunch);
         _activeLaunch = result;
+        _displayedOverlayWarningCount =
+            result.OverlayCompatibility?.Warnings.Count ?? 0;
+    }
+
+    private string[] RestoreOverlayCompatibility(
+        FourKayLaunchResult? launch)
+    {
+        if (launch?.OverlayCompatibility is not { } overlays)
+        {
+            return [];
+        }
+
+        int previousWarningCount = overlays.Warnings.Count;
+        OverlayCompatibilityUpdate update =
+            _overlayCompatibility.Restore(overlays);
+        return update.Warnings.Skip(previousWarningCount).ToArray();
     }
 
     private static void DisposeLaunchHandles(FourKayLaunchResult? launch)
