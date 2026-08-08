@@ -32,6 +32,8 @@ public sealed record FourKayLaunchRequest
     public MagpieGraphicsAdapter GraphicsAdapter { get; init; } = new();
 
     public bool DisableDirectFlip { get; init; }
+
+    public bool MaintainTopmostOverlays { get; init; }
 }
 
 public sealed record FourKayAttachRequest
@@ -81,6 +83,8 @@ public sealed record FourKayAttachRequest
 
     public bool DisableDirectFlip { get; init; }
 
+    public bool MaintainTopmostOverlays { get; init; }
+
     public FourKayUiCompatibilityMode UiCompatibilityMode { get; init; } =
         FourKayUiCompatibilityMode.GenericOrCustom;
 }
@@ -101,6 +105,8 @@ public sealed record FourKayLaunchResult(
     IReadOnlyList<string> Warnings)
 {
     public AttachWindowRecoveryState? AttachWindowRecovery { get; init; }
+
+    public OverlayCompatibilitySession? OverlayCompatibility { get; init; }
 }
 
 public sealed record FourKayLiveScaleRequest
@@ -382,6 +388,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
     private readonly IMagpieScalingWindowInspector _scalingInspector;
     private readonly IEqClientConfigurationService _eqClientConfiguration;
     private readonly IForegroundWindowService _foregroundWindow;
+    private readonly IOverlayCompatibilityService _overlayCompatibility;
 
     public FourKayLaunchService(
         IProcessDiscoveryService? processDiscovery = null,
@@ -391,7 +398,8 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         IMagpieProcessService? magpieProcess = null,
         IMagpieScalingWindowInspector? scalingInspector = null,
         IEqClientConfigurationService? eqClientConfiguration = null,
-        IForegroundWindowService? foregroundWindow = null)
+        IForegroundWindowService? foregroundWindow = null,
+        IOverlayCompatibilityService? overlayCompatibility = null)
     {
         _processDiscovery = processDiscovery ?? new ProcessDiscoveryService();
         _windowDiscovery = windowDiscovery ?? new WindowDiscoveryService();
@@ -403,6 +411,8 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
             eqClientConfiguration ?? new EqClientConfigurationService();
         _foregroundWindow =
             foregroundWindow ?? new ForegroundWindowService();
+        _overlayCompatibility =
+            overlayCompatibility ?? new OverlayCompatibilityService();
     }
 
     public async Task<FourKayLaunchResult> LaunchAndScaleAsync(
@@ -482,6 +492,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 request.MaximumFrameRate,
                 request.GraphicsAdapter,
                 request.DisableDirectFlip,
+                request.MaintainTopmostOverlays,
                 state.UiCompatibilityMode,
                 request.ScalingTimeout,
                 attachedToExistingGame: false,
@@ -660,6 +671,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                         request.MaximumFrameRate,
                         request.GraphicsAdapter,
                         request.DisableDirectFlip,
+                        request.MaintainTopmostOverlays,
                         request.UiCompatibilityMode,
                         request.ScalingTimeout,
                         attachedToExistingGame: true,
@@ -1180,6 +1192,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         double? maximumFrameRate,
         MagpieGraphicsAdapter graphicsAdapter,
         bool disableDirectFlip,
+        bool maintainTopmostOverlays,
         FourKayUiCompatibilityMode uiCompatibilityMode,
         TimeSpan scalingTimeout,
         bool attachedToExistingGame,
@@ -1236,6 +1249,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         EnsureNoMagpieInstances(magpieDirectory);
 
         MagpieProcessStartResult? magpie = null;
+        OverlayCompatibilitySession? overlaySession = null;
         try
         {
             await finalConfigurationGuard(cancellationToken).ConfigureAwait(false);
@@ -1243,14 +1257,6 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 await _magpieConfig.ApplyTransactionAsync(
                     transaction,
                     cancellationToken).ConfigureAwait(false);
-
-            magpie = _magpieProcess.StartPortable(
-                magpieDirectory,
-                startInTray: true);
-            if (magpie.AlreadyRunning)
-            {
-                throw new DedicatedMagpieConfigReloadRequiredException();
-            }
 
             List<string> runtimeWarnings = warnings.ToList();
             const string focusGuidance =
@@ -1260,6 +1266,46 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
             if (!focusSucceeded)
             {
                 runtimeWarnings.Add(focusGuidance);
+            }
+
+            if (maintainTopmostOverlays)
+            {
+                if (focusSucceeded)
+                {
+                    // Companion overlays commonly update their topmost state on a
+                    // short UI timer after EQ becomes foreground. Give that state a
+                    // bounded moment to settle before Magpie becomes foreground.
+                    await Task.Delay(
+                        TimeSpan.FromMilliseconds(300),
+                        cancellationToken).ConfigureAwait(false);
+                }
+
+                HashSet<int> excludedProcessIds =
+                [
+                    Environment.ProcessId,
+                    gameProcess.Id,
+                ];
+                if (launcher is not null)
+                {
+                    excludedProcessIds.Add(launcher.Id);
+                }
+
+                overlaySession = _overlayCompatibility.Capture(
+                    new OverlayCompatibilityCaptureRequest
+                    {
+                        SourceRegion = sourceWindow.ClientBounds,
+                        TargetRegion = placement.Monitor.Bounds,
+                        ExcludedProcessIds = excludedProcessIds,
+                    });
+                runtimeWarnings.AddRange(overlaySession.Warnings);
+            }
+
+            magpie = _magpieProcess.StartPortable(
+                magpieDirectory,
+                startInTray: true);
+            if (magpie.AlreadyRunning)
+            {
+                throw new DedicatedMagpieConfigReloadRequiredException();
             }
 
             MagpieScalingWindowInspection inspection =
@@ -1346,6 +1392,23 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
 
             await finalConfigurationGuard(cancellationToken).ConfigureAwait(false);
 
+            PixelRect destinationRegion = inspection.DestinationRegion
+                ?? throw new InvalidOperationException(
+                    "The verified scaling output has no destination region.");
+            if (overlaySession is not null)
+            {
+                OverlayCompatibilityUpdate overlayUpdate =
+                    _overlayCompatibility.Activate(
+                        overlaySession,
+                        inspection.ScalingWindowHandle,
+                        magpie.Process.Id,
+                        destinationRegion);
+                runtimeWarnings.AddRange(overlayUpdate.Warnings);
+                runtimeWarnings = runtimeWarnings
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+            }
+
             return new FourKayLaunchResult(
                 launcher,
                 gameProcess,
@@ -1353,9 +1416,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 placement,
                 filter,
                 uiCompatibilityMode,
-                inspection.DestinationRegion
-                    ?? throw new InvalidOperationException(
-                        "The verified scaling output has no destination region."),
+                destinationRegion,
                 Path.GetFullPath(magpieDirectory),
                 config,
                 magpie,
@@ -1364,6 +1425,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 runtimeWarnings)
             {
                 AttachWindowRecovery = attachWindowRecovery,
+                OverlayCompatibility = overlaySession,
             };
         }
         catch (Exception startupFailure)
@@ -1373,6 +1435,10 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
                 magpieDirectory,
                 magpie,
                 transaction).ConfigureAwait(false);
+            if (overlaySession is not null)
+            {
+                _ = _overlayCompatibility.Restore(overlaySession);
+            }
             if (!cleanup.EngineAbsenceConfirmed
                 || !cleanup.ConfigRollbackResolved
                 || !cleanup.InactiveAfterCleanup)

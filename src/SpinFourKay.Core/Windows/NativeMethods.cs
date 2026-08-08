@@ -18,8 +18,15 @@ internal static class NativeMethods
     internal const uint SwpNoMove = 0x0002;
     internal const uint SwpNoZOrder = 0x0004;
     internal const uint SwpNoActivate = 0x0010;
+    internal const uint SwpNoOwnerZOrder = 0x0200;
     internal const uint SwpFrameChanged = 0x0020;
+    internal const uint WsExTopmost = 0x00000008;
+    internal const uint WsExTransparent = 0x00000020;
+    internal const uint WsExToolWindow = 0x00000080;
+    internal const uint WsExLayered = 0x00080000;
     internal const uint MonitorInfoPrimary = 0x00000001;
+    internal static readonly nint HwndTopmost = new(-1);
+    internal static readonly nint HwndNotTopmost = new(-2);
 
     internal delegate bool EnumWindowsCallback(nint windowHandle, nint parameter);
     internal delegate bool MonitorEnumCallback(

@@ -722,6 +722,40 @@
                                            Text="Only used by compatibility filters. Readable UI automatically leaves whole-frame smoothing off so it cannot blur small lettering." />
                             </Grid>
 
+                            <Border Margin="0,9,0,0"
+                                    Padding="12,10"
+                                    Background="#102028"
+                                    BorderBrush="#38546A"
+                                    BorderThickness="1"
+                                    CornerRadius="9">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{StaticResource CyanBrush}"
+                                                   Text="Companion overlays" />
+                                        <TextBlock Margin="0,2,0,0"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Text="Keeps existing always-on-top DPS meters and companion HUDs above the scaled game. Their windows are repositioned without resizing, so overlay text stays native-sharp; unchanged placements return when scaling stops." />
+                                    </StackPanel>
+                                    <CheckBox x:Name="OverlayCompatibilityCheckBox"
+                                              Grid.Column="1"
+                                              VerticalAlignment="Center"
+                                              IsChecked="True"
+                                              FontWeight="SemiBold"
+                                              AutomationProperties.Name="Keep companion overlays visible"
+                                              AutomationProperties.HelpText="Keeps existing always-on-top companion windows above the verified fullscreen output without resizing their pixels.">
+                                        <TextBlock Text="Keep visible · recommended" />
+                                    </CheckBox>
+                                </Grid>
+                            </Border>
+
                             <Border x:Name="SpinUiNoticeBorder"
                                     Margin="0,9,0,0"
                                     Padding="12"

@@ -13,6 +13,8 @@ For sizes above 100%, SpinFOURKAYYY automatically fits every player's own `UI_<c
 3. Click **Start EverQuest for me**. The normal Legends launcher opens; patch and sign in normally.
 4. Keep SpinFOURKAYYY open while playing. When EverQuest exits, the app saves layout changes for that percentage and returns the live layout files to native geometry automatically.
 
+The recommended **Keep companion overlays visible** option is on by default. If a DPS meter or companion HUD is already running, SpinFOURKAYYY recognizes its genuine always-on-top windows before fullscreen begins. It also watches for new always-on-top overlays opened during the session.
+
 SpinFOURKAYYY never resizes or attaches to an already-running client. Choose the percentage and any advanced quality options first, then launch through the app. This guarantees that EverQuest starts in a normal (not maximized or fullscreen) window at the exact physical source size Magpie will validate.
 
 No character-profile selection is required. **Current/default/custom UI** remains selected unless the user explicitly chooses the optional strict SpinUI workflow.
@@ -76,6 +78,20 @@ The advanced compatibility controls include whole-frame post-process anti-aliasi
 - **FXAA High** is a lighter, softer alternative.
 
 Anti-aliasing smooths the complete composed frame rather than changing EverQuest's internal 3D anti-aliasing setting, so it also affects UI text and artwork. Readable UI always forces it Off and disables this control. Other compatibility filters can use it; choose the option before launching and use Off if small text looks too soft.
+
+## Companion overlays
+
+Magpie's focused fullscreen surface normally rises above every other topmost window. That is good for uninterrupted fullscreen presentation, but it can hide DPS meters and companion HUDs that are designed to float over EverQuest.
+
+**Keep companion overlays visible** provides a narrow compatibility layer:
+
+- It inventories small, visible, non-system always-on-top windows on the target display only after the exact EverQuest window is ready and before Magpie starts. Shell surfaces, system windows, the game, SpinFOURKAYYY, Magpie, and other fullscreen-sized windows are excluded.
+- It keeps those exact window handles above the verified scaling output only while EverQuest, Magpie's output, or the companion itself is foreground. Alt+Tab to another application is left to the overlay's own normal policy.
+- It maps an overlay's edge/center anchor from the prepared EverQuest source region to the fullscreen destination, but never resizes or captures the overlay. The overlay continues rendering its own text and artwork at native Windows resolution instead of being filtered with the game frame.
+- It remembers the exact pre-launch rectangle. When scaling stops, that rectangle is restored only if the same process/window still occupies the position SpinFOURKAYYY applied. If the player or overlay moves or resizes itself during play, that newer placement wins and is never overwritten.
+- It discovers newly opened always-on-top companion windows during play and promotes them without guessing a new position.
+
+The option does not inject into, capture, resize, configure, or save settings for third-party overlays. Both applications must run at the same Windows privilege level. For an overlay that deliberately removes its own topmost state whenever Magpie is foreground, start it before launching EverQuest so it can be identified during the pre-fullscreen capture.
 
 ## Fullscreen, Alt+Tab, and mouse behavior
 
