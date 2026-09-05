@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -18,6 +19,7 @@ using SpinFourKay.Core.Layouts;
 using SpinFourKay.Core.Magpie;
 using SpinFourKay.Core.Orchestration;
 using SpinFourKay.Core.Preferences;
+using SpinFourKay.Core.Startup;
 using SpinFourKay.Core.Updates;
 using SpinFourKay.Core.Windows;
 
@@ -37,6 +39,7 @@ public partial class MainWindow : Window, IDisposable
     private readonly FourKayJournalStore _journalStore = new();
     private readonly UiLayoutProfileService _layoutProfileService = new();
     private readonly MagpieScalingWindowInspector _scalingInspector = new();
+    private readonly MagpieProcessService _magpieProcess = new();
     private readonly ProcessDiscoveryService _processDiscovery = new();
     private readonly WindowDiscoveryService _windowDiscovery = new();
     private readonly ForegroundWindowService _foregroundWindow = new();
@@ -81,6 +84,8 @@ public partial class MainWindow : Window, IDisposable
     private bool _allowCloseAfterCleanup;
     private bool _isUpdatingPresetCards;
     private bool _startupRunningGameDetectionAttempted;
+    private bool _autoPlayAttempted;
+    private string? _engineTidySummary;
     private bool _preferencesReady;
     private string? _lastValidLegendsDirectory;
     private string? _spinTextureExecutablePath;
@@ -184,6 +189,7 @@ public partial class MainWindow : Window, IDisposable
 
         PopulateDisplays(preferences.TargetDisplayBounds);
         ApplySavedPreferences(preferences);
+        await TidySupersededEngineRuntimesAsync().ConfigureAwait(true);
         _preferencesReady = true;
         RefreshDisplayAndPlan();
         await LoadRecoveryStateAsync().ConfigureAwait(true);
@@ -212,9 +218,270 @@ public partial class MainWindow : Window, IDisposable
                 MessageBoxImage.Information);
         }
 
+        // A shortcut launch must not be answered with an install prompt the
+        // player did not open. The update banner and Install update button
+        // still appear; only the modal question is skipped.
         await CheckForUpdatesAsync(
             showCurrentVersionMessage: false,
-            offerInstall: App.UpdatedFromVersion is null).ConfigureAwait(true);
+            offerInstall: App.UpdatedFromVersion is null
+                && !App.StartupSwitches.RequestsAutoPlay).ConfigureAwait(true);
+        if (_engineTidySummary is { } tidySummary
+            && !App.StartupSwitches.RequestsAutoPlay)
+        {
+            SetStatus(StatusTone.Info, "SCALING ENGINE TIDIED", tidySummary);
+        }
+
+        await TryStartRequestedAutoPlayAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Closes and removes scaling engines left behind by previous versions of
+    /// SpinFOURKAYYY.
+    /// </summary>
+    /// <remarks>
+    /// The engine is provisioned into an app-version-specific folder, so
+    /// updating SpinFOURKAYYY moves it. A Magpie left in the tray by the old
+    /// version would otherwise be reported as a separately installed Magpie the
+    /// user had to hunt down and close, which is confusing precisely because
+    /// they never installed one. Closing it is this application's own business.
+    /// </remarks>
+    private async Task TidySupersededEngineRuntimesAsync()
+    {
+        try
+        {
+            string magpieDirectory = PathLocator.FindMagpieDirectory();
+            string? runtimeRoot = Path.GetDirectoryName(magpieDirectory);
+            string currentRuntimeKey = Path.GetFileName(magpieDirectory);
+            if (string.IsNullOrWhiteSpace(runtimeRoot)
+                || string.IsNullOrWhiteSpace(currentRuntimeKey))
+            {
+                return;
+            }
+
+            IReadOnlyList<int> closed = await _magpieProcess
+                .ShutdownSupersededAsync(
+                    magpieDirectory,
+                    TimeSpan.FromSeconds(5),
+                    CancellationToken.None)
+                .ConfigureAwait(true);
+
+            // A runtime whose engine is still running must be left completely
+            // alone; a partial delete would strip a live engine's shaders.
+            HashSet<string> directoriesInUse = _magpieProcess
+                .InspectRunningInstances(magpieDirectory)
+                .Select(instance => instance.ExecutablePath)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => Path.GetDirectoryName(path!))
+                .Where(directory => !string.IsNullOrWhiteSpace(directory))
+                .Select(directory =>
+                    Path.TrimEndingDirectorySeparator(directory!))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            IReadOnlyList<string> removed =
+                MagpieRuntimeProvisioner.PruneSupersededRuntimes(
+                    runtimeRoot,
+                    currentRuntimeKey,
+                    candidate => directoriesInUse.Contains(
+                        Path.TrimEndingDirectorySeparator(candidate)));
+
+            if (closed.Count == 0 && removed.Count == 0)
+            {
+                return;
+            }
+
+            List<string> parts = [];
+            if (closed.Count > 0)
+            {
+                parts.Add(
+                    $"Closed {closed.Count} scaling "
+                        + (closed.Count == 1 ? "engine" : "engines")
+                        + " left running by a previous SpinFOURKAYYY version");
+            }
+
+            if (removed.Count > 0)
+            {
+                parts.Add(
+                    $"removed {removed.Count} superseded engine "
+                        + (removed.Count == 1 ? "folder" : "folders"));
+            }
+
+            _engineTidySummary = string.Join(" and ", parts)
+                + ". Your settings and EverQuest files were not touched.";
+        }
+        catch (Exception exception) when (
+            IsExpectedUserFacingFailure(exception)
+            || exception is DirectoryNotFoundException)
+        {
+            // Housekeeping never blocks startup. A missing or busy engine is
+            // reported by the normal readiness checks instead.
+            Debug.WriteLine("SpinFOURKAYYY engine tidy skipped: " + exception.Message);
+        }
+    }
+
+    /// <summary>
+    /// Starts the game without further input when SpinFOURKAYYY was opened by a
+    /// <c>--play</c> or <c>--play-enhanced</c> shortcut. The launch runs the
+    /// same code path as the on-screen buttons; only the trigger differs, so an
+    /// unattended start can never take a route the manual one does not.
+    /// </summary>
+    private async Task TryStartRequestedAutoPlayAsync()
+    {
+        if (_autoPlayAttempted)
+        {
+            return;
+        }
+
+        _autoPlayAttempted = true;
+        StartupCommandLine startup = App.StartupSwitches;
+        if (startup.AutoPlayRejection is { } rejection)
+        {
+            AnnounceRefusedAutoPlay(
+                "SHORTCUT NOT UNDERSTOOD",
+                "SpinFOURKAYYY did not start the game",
+                rejection);
+            return;
+        }
+
+        if (!startup.RequestsAutoPlay)
+        {
+            return;
+        }
+
+        // The launch button is the single authority on whether a launch may
+        // proceed. An unattended start asks it rather than repeating its rules.
+        RefreshActionAvailability();
+        if (!PrepareLaunchButton.IsEnabled)
+        {
+            AdvancedExpander.IsExpanded = true;
+            AnnounceRefusedAutoPlay(
+                "AUTOMATIC START SKIPPED",
+                "SpinFOURKAYYY did not start the game",
+                DescribeAutoPlayBlock());
+            return;
+        }
+
+        if (startup.AutoPlay == AutoPlayMode.SpinTextureEnhanced)
+        {
+            // A desktop shortcut must never answer a double-click with a file
+            // picker, so an unknown SpinTexture location refuses instead of
+            // prompting the way the on-screen button does.
+            string? spinTexturePath =
+                PathLocator.IsSpinTextureExecutable(_spinTextureExecutablePath)
+                    ? Path.GetFullPath(_spinTextureExecutablePath!)
+                    : PathLocator.FindSpinTextureExecutable();
+            if (spinTexturePath is null)
+            {
+                AnnounceRefusedAutoPlay(
+                    "SPINTEXTURE NOT SET UP YET",
+                    "SpinFOURKAYYY needs SpinTexture first",
+                    "The enhanced shortcut needs SpinTexture. Use Play Enhanced "
+                        + "EQ here once and choose SpinTexture.exe from its fully "
+                        + "extracted folder; the shortcut works from then on. "
+                        + "Nothing was started.");
+                return;
+            }
+
+            _spinTextureExecutablePath = spinTexturePath;
+            QueuePreferencesSave();
+            await RunOperationAsync(
+                "PREPARING ENHANCED EVERQUEST",
+                "Starting from your desktop shortcut using your saved size, "
+                    + "quality, display and UI choices\u2026",
+                token => LaunchThenAutoScaleCoreAsync(
+                    FourKayGameStartMode.SpinTextureEnhanced,
+                    spinTexturePath,
+                    token)).ConfigureAwait(true);
+            return;
+        }
+
+        await RunOperationAsync(
+            "PREPARING AND STARTING EVERQUEST",
+            "Starting from your desktop shortcut using your saved size, quality, "
+                + "display and UI choices\u2026",
+            token => LaunchThenAutoScaleCoreAsync(
+                FourKayGameStartMode.OfficialLauncher,
+                launchTargetPath: null,
+                token)).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Reports a refused unattended start. A shortcut is usually opened by
+    /// someone who has already looked away, so the refusal is raised in front
+    /// of them rather than left as a line in a window they are not watching.
+    /// </summary>
+    private void AnnounceRefusedAutoPlay(
+        string heading,
+        string title,
+        string message)
+    {
+        SetStatus(StatusTone.Warning, heading, message);
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        _ = Activate();
+        _ = MessageBox.Show(
+            this,
+            message,
+            title,
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
+    /// <summary>
+    /// Supplies the wording for a refused unattended start. This never decides
+    /// whether a launch may happen; it only explains a decision already made by
+    /// <see cref="RefreshActionAvailability"/>.
+    /// </summary>
+    private string DescribeAutoPlayBlock()
+    {
+        if (_isBusy || _isCloseCleanupRunning)
+        {
+            return "SpinFOURKAYYY is still finishing another action, so nothing "
+                + "was started. Use Start EverQuest for me once it finishes.";
+        }
+
+        if (_isScaledSessionActive || _scalingCleanupRequired)
+        {
+            return "A fullscreen scaling session is still active or still needs "
+                + "cleanup, so nothing was started. Finish it here first.";
+        }
+
+        if (!PathLocator.IsLegendsDirectory(LegendsPathTextBox.Text))
+        {
+            return "The saved EverQuest Legends folder could not be verified, so "
+                + "nothing was started. Choose the folder containing eqgame.exe "
+                + "and eqclient.ini, then use the shortcut again.";
+        }
+
+        try
+        {
+            _ = PathLocator.FindMagpieDirectory();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return "The Engine\\Magpie folder is incomplete, so nothing was "
+                + "started. Re-extract the whole release into one folder.";
+        }
+
+        if (UsesStrictSpinUiMode && !IsUiSessionConfirmationSatisfied)
+        {
+            return "SpinUI mode still needs its one-time layout confirmation, so "
+                + "nothing was started. Confirm it here, then use the shortcut "
+                + "again.";
+        }
+
+        if (_display is null || _currentPlan is null)
+        {
+            return "A display and size could not be prepared from your saved "
+                + "settings, so nothing was started. Choose them here, then use "
+                + "the shortcut again.";
+        }
+
+        return "Your saved settings could not be used for an unattended start, "
+            + "so nothing was started. Check the highlighted options here, then "
+            + "use Start EverQuest for me.";
     }
 
     private void DetectRunningGameAtStartup()
@@ -225,13 +492,7 @@ public partial class MainWindow : Window, IDisposable
         }
 
         _startupRunningGameDetectionAttempted = true;
-        if (Environment.GetCommandLineArgs()
-            .Skip(1)
-            .Any(
-                argument => string.Equals(
-                    argument,
-                    "--manual",
-                    StringComparison.OrdinalIgnoreCase)))
+        if (App.StartupSwitches.SkipRunningGameDetection)
         {
             SetStatus(
                 StatusTone.Info,
@@ -1229,6 +1490,114 @@ public partial class MainWindow : Window, IDisposable
         catch (Exception exception) when (IsExpectedUserFacingFailure(exception))
         {
             ShowError("Scaling engine not found", exception.Message);
+        }
+    }
+
+    private void MakeShortcut_Click(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not Button button || button.ContextMenu is not { } menu)
+        {
+            return;
+        }
+
+        menu.PlacementTarget = button;
+        menu.Placement = PlacementMode.Bottom;
+        menu.HorizontalOffset = 0;
+        menu.VerticalOffset = 4;
+        menu.IsOpen = true;
+    }
+
+    private void MakeNormalShortcut_Click(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        CreateDesktopShortcut(DesktopShortcutKind.NormalPlay);
+    }
+
+    private void MakeEnhancedShortcut_Click(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        CreateDesktopShortcut(DesktopShortcutKind.EnhancedPlay);
+    }
+
+    /// <summary>
+    /// Writes one desktop shortcut that reopens SpinFOURKAYYY with the matching
+    /// play switch. Replacing an existing shortcut is confirmed first, because
+    /// a file on the user's desktop may have been customized by hand.
+    /// </summary>
+    private void CreateDesktopShortcut(DesktopShortcutKind kind)
+    {
+        try
+        {
+            // The release is published as a single file, so the running
+            // executable path is the only usable shortcut target.
+            string applicationPath = Environment.ProcessPath
+                ?? throw new InvalidOperationException(
+                    "The running SpinFOURKAYYY executable could not be located, "
+                        + "so no shortcut was created.");
+            string? legendsDirectory =
+                PathLocator.IsLegendsDirectory(LegendsPathTextBox.Text)
+                    ? Path.GetFullPath(LegendsPathTextBox.Text)
+                    : _lastValidLegendsDirectory;
+            DesktopShortcutPlan plan = DesktopShortcutPlan.Create(
+                kind,
+                applicationPath,
+                legendsDirectory);
+
+            string desktopDirectory = Environment.GetFolderPath(
+                Environment.SpecialFolder.DesktopDirectory,
+                Environment.SpecialFolderOption.DoNotVerify);
+            if (string.IsNullOrWhiteSpace(desktopDirectory)
+                || !Directory.Exists(desktopDirectory))
+            {
+                ShowError(
+                    "Desktop folder not found",
+                    "Windows did not report a usable desktop folder, so no "
+                        + "shortcut was created. Nothing else was changed.");
+                return;
+            }
+
+            string destination = plan.ResolveDestinationPath(desktopDirectory);
+            if (File.Exists(destination)
+                && MessageBox.Show(
+                    this,
+                    $"Replace the existing \"{plan.FileName}\" on your desktop?"
+                        + "\n\nThe replacement starts EverQuest with the settings "
+                        + "saved in SpinFOURKAYYY. Any changes you made to the "
+                        + "existing shortcut yourself would be lost.",
+                    "Replace desktop shortcut",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question,
+                    MessageBoxResult.No) != MessageBoxResult.Yes)
+            {
+                SetStatus(
+                    StatusTone.Info,
+                    "SHORTCUT LEFT ALONE",
+                    $"The existing \"{plan.FileName}\" on your desktop was not "
+                        + "changed.");
+                return;
+            }
+
+            _ = WindowsShortcutService.Save(plan, destination);
+            SetStatus(
+                StatusTone.Ready,
+                "DESKTOP SHORTCUT READY",
+                $"\"{plan.FileName}\" is on your desktop. Opening it starts "
+                    + (kind == DesktopShortcutKind.EnhancedPlay
+                        ? "the enhanced texture pack through SpinTexture "
+                        : "EverQuest through the normal launcher ")
+                    + "using the settings saved here. "
+                    + (plan.UsesLegendsIcon
+                        ? "It uses the EverQuest Legends icon from your "
+                            + "installed client."
+                        : "It uses the SpinFOURKAYYY icon because no EverQuest "
+                            + "Legends folder is selected yet."));
+        }
+        catch (Exception exception) when (IsExpectedUserFacingFailure(exception))
+        {
+            ShowError("Could not create the shortcut", exception.Message);
         }
     }
 
@@ -2753,6 +3122,8 @@ public partial class MainWindow : Window, IDisposable
             ClaritySlider.Value = preferences.ClarityPercent;
             OverlayCompatibilityCheckBox.IsChecked =
                 preferences.MaintainTopmostOverlays;
+            CloseConflictingMagpieCheckBox.IsChecked =
+                preferences.CloseConflictingMagpieAutomatically;
             bool strict = preferences.UiCompatibilityMode
                 == FourKayUiCompatibilityMode.SpinUiStrict;
             _lastSpinUiPresetIndex = preferences.SpinUiPresetIndex;
@@ -2798,6 +3169,8 @@ public partial class MainWindow : Window, IDisposable
                 MidpointRounding.AwayFromZero)),
             MaintainTopmostOverlays =
                 OverlayCompatibilityCheckBox.IsChecked == true,
+            CloseConflictingMagpieAutomatically =
+                CloseConflictingMagpieCheckBox.IsChecked == true,
             UiCompatibilityMode = SelectedUiCompatibilityMode,
             SpinUiPresetIndex = _lastSpinUiPresetIndex,
         };
@@ -3195,6 +3568,86 @@ public partial class MainWindow : Window, IDisposable
                 + "a recovery copy first).";
     }
 
+    /// <summary>
+    /// Asks whether a separately installed Magpie may be closed, and closes it
+    /// when the user agrees.
+    /// </summary>
+    /// <remarks>
+    /// This is the one case where SpinFOURKAYYY ends a process the user started
+    /// themselves, so it is never done without an explicit answer. Magpie is
+    /// asked to quit through its own message rather than terminated, so it exits
+    /// the same way it would from its tray icon.
+    /// </remarks>
+    private async Task<bool> TryCloseForeignMagpieAsync(
+        ExternalMagpieInstanceConflictException conflict)
+    {
+        string running = string.Join(
+            Environment.NewLine,
+            conflict.ConflictingInstances.Select(
+                instance => "    "
+                    + (instance.ExecutablePath
+                        ?? $"Magpie process {instance.ProcessId}")));
+        if (CloseConflictingMagpieCheckBox.IsChecked == true)
+        {
+            return await CloseForeignMagpieAsync().ConfigureAwait(true);
+        }
+
+        MessageBoxResult choice = MessageBox.Show(
+            this,
+            "A separately installed Magpie is running. SpinFOURKAYYY needs its "
+                + "own copy so the exact scaling profile for your chosen size can "
+                + "load, and Magpie allows only one copy at a time."
+                + Environment.NewLine
+                + Environment.NewLine
+                + running
+                + Environment.NewLine
+                + Environment.NewLine
+                + "Close it and continue? Magpie is asked to quit normally, the "
+                + "same as choosing Exit from its tray icon. Anything it is "
+                + "currently scaling will stop. Nothing else is changed.",
+            "Close the other Magpie?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No);
+        if (choice != MessageBoxResult.Yes)
+        {
+            return false;
+        }
+
+        return await CloseForeignMagpieAsync().ConfigureAwait(true);
+    }
+
+    private async Task<bool> CloseForeignMagpieAsync()
+    {
+        SetStatus(
+            StatusTone.Working,
+            "CLOSING THE OTHER MAGPIE",
+            "Asking Magpie to quit normally, then continuing\u2026");
+        IReadOnlyList<int> closed = await _magpieProcess
+            .ShutdownAllConsentedAsync(
+                PathLocator.FindMagpieDirectory(),
+                TimeSpan.FromSeconds(8),
+                CancellationToken.None)
+            .ConfigureAwait(true);
+        if (closed.Count == 0)
+        {
+            ShowError(
+                "Magpie did not close",
+                "Magpie did not respond to a normal quit request, so nothing was "
+                    + "changed. Close it from its tray icon, then try again.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private void CloseConflictingMagpie_Changed(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        QueuePreferencesSave();
+    }
+
     private async Task RunOperationAsync(
         string heading,
         string message,
@@ -3224,7 +3677,26 @@ public partial class MainWindow : Window, IDisposable
                 await healthCheck.ConfigureAwait(true);
             }
 
-            await operation(_operationCancellation.Token).ConfigureAwait(true);
+            // A foreign Magpie blocks the dedicated profile from loading. Offer
+            // to close it rather than making the user hunt for a tray icon, then
+            // retry exactly once so a declined or failed shutdown still reports
+            // through the normal error path.
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    await operation(_operationCancellation.Token).ConfigureAwait(true);
+                    break;
+                }
+                catch (ExternalMagpieInstanceConflictException conflict)
+                    when (attempt == 0)
+                {
+                    if (!await TryCloseForeignMagpieAsync(conflict).ConfigureAwait(true))
+                    {
+                        throw;
+                    }
+                }
+            }
         }
         catch (OperationCanceledException)
         {

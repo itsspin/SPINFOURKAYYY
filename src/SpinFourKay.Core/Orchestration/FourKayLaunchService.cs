@@ -424,6 +424,9 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
             overlayCompatibility ?? new OverlayCompatibilityService();
     }
 
+    private static readonly TimeSpan MagpieProfileReloadShutdownTimeout =
+        TimeSpan.FromSeconds(6);
+
     public async Task<FourKayLaunchResult> LaunchAndScaleAsync(
         FourKayLaunchRequest request,
         CancellationToken cancellationToken = default)
@@ -1827,7 +1830,21 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         }
     }
 
-    private Task EnsureMagpieReadyAsync(
+    /// <summary>
+    /// Ensures no scaling engine is holding a stale profile before this
+    /// operation writes a new one.
+    /// </summary>
+    /// <remarks>
+    /// Magpie reads its portable profile only when it starts, so a size or
+    /// quality change cannot reach an instance that is already running. Once a
+    /// foreign Magpie is ruled out, everything left belongs to this application:
+    /// its own dedicated engine, in its own folder, running a profile this
+    /// application wrote. Restarting it is this application's own business, so
+    /// it is stopped here rather than asking the player to close a process they
+    /// never started. The engine is asked to quit through its own message, and
+    /// its absence is confirmed before the caller writes the new profile.
+    /// </remarks>
+    private async Task EnsureMagpieReadyAsync(
         string magpieDirectory,
         CancellationToken cancellationToken)
     {
@@ -1835,19 +1852,33 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         IReadOnlyList<MagpieRunningInstance> instances =
             _magpieProcess.InspectRunningInstances(magpieDirectory);
         MagpieRunningInstance[] external = instances
-            .Where(instance => !instance.IsBundledInstance)
+            .Where(instance => instance.IsForeignInstance)
             .ToArray();
         if (external.Length > 0)
         {
             throw new ExternalMagpieInstanceConflictException(external);
         }
 
-        if (instances.Count > 0)
+        if (instances.Count == 0)
+        {
+            return;
+        }
+
+        if (!await _magpieProcess.ShutdownBundledAsync(
+                magpieDirectory,
+                MagpieProfileReloadShutdownTimeout,
+                cancellationToken).ConfigureAwait(false))
         {
             throw new DedicatedMagpieConfigReloadRequiredException();
         }
 
-        return Task.CompletedTask;
+        // Confirm the engine is gone rather than trusting that it was asked to
+        // leave. Magpie can write its own profile while shutting down, so the
+        // caller must not snapshot that file until the process is really absent.
+        if (_magpieProcess.InspectRunningInstances(magpieDirectory).Count > 0)
+        {
+            throw new DedicatedMagpieConfigReloadRequiredException();
+        }
     }
 
     private void EnsureNoMagpieInstances(string magpieDirectory)
@@ -1855,7 +1886,7 @@ public sealed class FourKayLaunchService : IFourKayLaunchService
         IReadOnlyList<MagpieRunningInstance> instances =
             _magpieProcess.InspectRunningInstances(magpieDirectory);
         MagpieRunningInstance[] external = instances
-            .Where(instance => !instance.IsBundledInstance)
+            .Where(instance => instance.IsForeignInstance)
             .ToArray();
         if (external.Length > 0)
         {
